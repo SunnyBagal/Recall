@@ -45,7 +45,7 @@ export default function SharedBrain() {
 
   return (
     <div className="min-h-screen bg-mybackg">
-      {/* Header */}
+      
       <header className="fixed top-0 left-0 right-0 h-16 flex items-center gap-3 px-8 border-b border-white/10 bg-mybackg z-10">
         <LogoIcon size="lg" />
         <span className="text-white font-semibold text-xl">
@@ -53,7 +53,7 @@ export default function SharedBrain() {
         </span>
       </header>
 
-      {/* Card grid */}
+      
       <div className="pt-20 px-6 pb-6">
         <div className="@container">
           {(data?.content ?? []).length === 0 ? (

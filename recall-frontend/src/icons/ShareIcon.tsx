@@ -1,6 +1,5 @@
 import { iconSizeVariants, type IconProps } from "."
 
-
 export const ShareIcon = (props: IconProps) => {
   return (
     <div>

@@ -61,7 +61,7 @@ export function ShareBrainModal({ open, onClose }: Props) {
         className="bg-[#0f0f1a] border border-white/10 rounded-2xl shadow-2xl w-full max-w-md mx-4 p-6"
         onClick={(e) => e.stopPropagation()}
       >
-        {/* Header */}
+        
         <div className="flex items-center justify-between mb-5">
           <h2 className="text-white font-semibold text-lg">Share your brain</h2>
           <button
@@ -85,7 +85,7 @@ export function ShareBrainModal({ open, onClose }: Props) {
               Anyone with this link can browse your saved content — read-only, no account needed.
             </p>
 
-            {/* URL display */}
+            
             <div className="flex items-center gap-2 bg-white/5 border border-white/10 rounded-xl px-4 py-3">
               <Link2 size={13} className="text-gray-500 shrink-0" />
               <span className="text-sm text-gray-300 truncate flex-1 font-mono">
@@ -93,7 +93,7 @@ export function ShareBrainModal({ open, onClose }: Props) {
               </span>
             </div>
 
-            {/* Actions */}
+            
             <div className="flex gap-2">
               <button
                 onClick={() => phase.status === "shared" && copyLink(phase.url)}

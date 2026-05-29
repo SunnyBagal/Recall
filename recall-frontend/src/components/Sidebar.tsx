@@ -52,7 +52,7 @@ export function Sidebar() {
         sidebarOpen ? "translate-x-0" : "-translate-x-full"
       }`}
     >
-      {/* ── Scrollable content ── */}
+      
       <div className="flex-1 overflow-y-auto pl-4 pr-2">
         <div className="pt-4">
           <SidebarContent
@@ -102,7 +102,7 @@ export function Sidebar() {
         )}
       </div>
 
-      {/* ── Share + Logout ── */}
+      
       <div className="p-3 border-t border-white/10">
         <button
           onClick={() => setShareOpen(true)}

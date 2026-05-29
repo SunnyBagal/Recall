@@ -5,15 +5,11 @@ import Signin from "./pages/signin";
 import Signup from "./pages/signup";
 import SharedBrain from "./pages/shared";
 
-// ── QueryClient ──
-// Create once at module level, not inside the component.
-// If you create it inside App, every re-render of App creates a new client
-// and throws away all cached data.
 const queryClient = new QueryClient({
   defaultOptions: {
     queries: {
-      retry: 1,              // retry failed requests once
-      refetchOnWindowFocus: true,  // refetch when user tabs back — keeps data fresh
+      retry: 1,              
+      refetchOnWindowFocus: true,  
     },
   },
 });

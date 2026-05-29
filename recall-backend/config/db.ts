@@ -13,4 +13,3 @@ export const db = drizzle({
   schema,
   logger: true  
 });
-

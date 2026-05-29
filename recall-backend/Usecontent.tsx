@@ -9,5 +9,4 @@ export type ContentType =
   | "article"
   | "link";
 
-
 export type ProcessingStatus = "pending"

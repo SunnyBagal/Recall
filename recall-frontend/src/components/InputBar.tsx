@@ -25,7 +25,6 @@ export function InputBar() {
       const link = trimmed.startsWith("http") ? trimmed : `https://${trimmed}`;
       createContent.mutate({ link }, { onSuccess: () => setValue("") });
     } else {
-      // It's a search query
       setSearchQuery(trimmed);
     }
   }

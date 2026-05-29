@@ -1,13 +1,12 @@
 
-export type DetectedType = 
-  | "youtube" 
+export type DetectedType =
+  | "youtube"
   | "twitter"
-  | "reddit" 
+  | "reddit"
   | "github"
-  | "instagram" 
+  | "instagram"
   | "article"
   | "link";
-
 
 export interface LinkDetectionResult {
   type: DetectedType;
@@ -24,7 +23,6 @@ export interface LinkDetectionResult {
   embedUrl: string | null;
 
 }
-
 
 function detectYoutube (url: URL) : LinkDetectionResult | null {
   let videoId: string | null = null;
@@ -54,24 +52,20 @@ function detectYoutube (url: URL) : LinkDetectionResult | null {
   };
 }
 
-
-
-
 function detectTwitter(url: URL): LinkDetectionResult | null {
   if (!url.hostname.includes("twitter.com") && !url.hostname.includes("x.com")) {
     return null;
   }
- 
+
   const match = url.pathname.match(/\/\w+\/status\/(\d+)/);
   if (!match) return null;
- 
+
   return {
     type: "twitter",
     embedData: { tweetId: match[1] },
     embedUrl: null,
   };
 }
-
 
 function detectReddit(url: URL): LinkDetectionResult | null {
   if (!url.hostname.includes("reddit.com")) return null;
@@ -87,8 +81,6 @@ function detectReddit(url: URL): LinkDetectionResult | null {
     embedUrl: `https://www.reddit.com${url.pathname}?ref=share&ref_source=embed`,
   };
 }
-
-
 
 function detectGitHub(url: URL) : LinkDetectionResult | null {
   if (url.hostname !== "github.com") return null;
@@ -107,10 +99,6 @@ function detectGitHub(url: URL) : LinkDetectionResult | null {
   };
 }
 
-
-
-
-
 function detectInstagram(url: URL): LinkDetectionResult | null {
   if (!url.hostname.includes("instagram.com")) return null;
 
@@ -123,9 +111,6 @@ function detectInstagram(url: URL): LinkDetectionResult | null {
     embedUrl: `https://www.instagram.com/${match[1]}/${match[2]}/embed`
   };
 }
-
-
-
 
 function detectArticle(url: URL): boolean {
 
@@ -162,8 +147,6 @@ function detectArticle(url: URL): boolean {
   return false
 }
 
-
-
 export function detectLinkType(rawUrl: string) : LinkDetectionResult {
   let url : URL;
 
@@ -174,9 +157,9 @@ export function detectLinkType(rawUrl: string) : LinkDetectionResult {
 
   } catch(err){
 
-    return { 
-      type: "link", 
-      embedData: {}, 
+    return {
+      type: "link",
+      embedData: {},
       embedUrl: null
     }
 
@@ -187,22 +170,20 @@ export function detectLinkType(rawUrl: string) : LinkDetectionResult {
 
   const twitter = detectTwitter(url);
   if (twitter) return twitter;
- 
+
   const reddit = detectReddit(url);
   if (reddit) return reddit;
- 
+
   const github = detectGitHub(url);
   if (github) return github;
- 
+
   const instagram = detectInstagram(url);
   if (instagram) return instagram;
-
 
   if (detectArticle(url)) {
     return { type: "article", embedData: {}, embedUrl: null };
   }
- 
+
   return { type: "link", embedData: {}, embedUrl: null };
- 
 
 }

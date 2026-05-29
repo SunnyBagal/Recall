@@ -2,7 +2,6 @@ import { parseHTML } from "linkedom";
 import type { DetectedType } from "./linkDetector";
 import { Readability } from "@mozilla/readability";
 
-
 export interface MetadataResult {
   ogTitle: string | null;
   ogDescription: string | null;
@@ -17,7 +16,6 @@ function getMetaContent(document: Document, attr: string, value: string): string
   const el = document.querySelector(`meta[${attr}="${value}"]`);
   return el?.getAttribute("content")?.trim() || null;
 }
-
 
 function resolveUrl(base: string, relative:string | null): string | null {
   if (!relative) return null;
@@ -42,7 +40,6 @@ function extractFavicon(document: Document, baseUrl: string): string | null {
     if (href) return resolveUrl(baseUrl, href);
   }
 
-
   try {
     const url = new URL(baseUrl);
     return `${url.origin}/favicon.ico`
@@ -51,8 +48,6 @@ function extractFavicon(document: Document, baseUrl: string): string | null {
   }
 
 }
-
-
 
 export async function fetchMetadata(
   url: string,

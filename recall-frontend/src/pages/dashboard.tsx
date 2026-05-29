@@ -25,7 +25,7 @@ function Dashboard() {
 
   const [modalOpen, setModalOpen] = useState(false);
 
-  // Priority: search → tag filter → type filter → all
+  
   const isSearchActive = searchQuery.trim().length > 0;
   const displayContents = isSearchActive
     ? searchResults
@@ -37,7 +37,7 @@ function Dashboard() {
 
   return (
     <>
-      {/* ── Navbar (user's exact code preserved) ── */}
+      
       <nav className="fixed top-0 left-0 right-0 z-50 border-b h-16 flex items-center justify-between bg-mybackg border-white">
         <div className={`flex items-center h-full px-6 shrink-0 border-r border-white transition-all duration-200 w-72 justify-center`}>
           <div className="flex items-center gap-2 text-4xl font-semibold text-white">

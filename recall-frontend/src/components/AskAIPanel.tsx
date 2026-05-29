@@ -1,11 +1,3 @@
-// ─── Ask AI Panel ───────────────────────────────────────────────
-// Full RAG chat panel:
-// 1. User types a question
-// 2. Backend retrieves relevant saved links via vector search
-// 3. Claude generates an answer citing those links
-// 4. Response streams in via SSE (Server-Sent Events)
-// 5. Citations render as clickable chips linking to the original cards
-
 import { useState, useRef, useEffect } from "react";
 import { BACKEND_URL } from "../config";
 import type { Content, ContentType } from "../hooks/useContent";
@@ -76,7 +68,7 @@ export function AskAIPanel({ open, onClose, context, onClearContext }: AskAIPane
     if (open) setTimeout(() => inputRef.current?.focus(), 300);
   }, [open]);
 
-  // When a card context is set, auto-ask about it (only once per card)
+  
   useEffect(() => {
     if (context && open && contextHandled.current !== context.id) {
       contextHandled.current = context.id;
@@ -107,8 +99,8 @@ export function AskAIPanel({ open, onClose, context, onClearContext }: AskAIPane
         body: JSON.stringify({
           message: messageText,
           history,
-          // Send the specific card ID so backend can look it up directly
-          // instead of relying purely on vector search
+          
+          
           cardId: cardId ?? context?.id,
         }),
       });
@@ -154,7 +146,7 @@ export function AskAIPanel({ open, onClose, context, onClearContext }: AskAIPane
                 return updated;
               });
             }
-          } catch { /* skip malformed */ }
+          } catch {  }
         }
       }
     } catch (err) {
@@ -175,14 +167,14 @@ export function AskAIPanel({ open, onClose, context, onClearContext }: AskAIPane
         open ? "translate-x-0" : "translate-x-full"
       }`}
     >
-      {/* Resize handle */}
+      
       <div
         onMouseDown={handleResizeStart}
         className="absolute left-0 top-0 bottom-0 w-1 cursor-col-resize hover:bg-white/30 transition-colors z-10"
         aria-label="Resize panel"
       />
 
-      {/* Header */}
+      
       <div className="flex items-center justify-between px-4 py-3 border-b border-white/10">
         <h3 className="font-semibold text-white">Ask AI</h3>
         <button onClick={onClose} className="p-1 hover:bg-white/10 rounded transition-colors text-gray-400 hover:text-white">
@@ -190,7 +182,7 @@ export function AskAIPanel({ open, onClose, context, onClearContext }: AskAIPane
         </button>
       </div>
 
-      {/* Context badge */}
+      
       {context && (
         <div className="px-4 py-2 bg-white/5 border-b border-white/10 flex items-center gap-2">
           <span className="text-xs text-gray-300 truncate flex-1">
@@ -202,7 +194,7 @@ export function AskAIPanel({ open, onClose, context, onClearContext }: AskAIPane
         </div>
       )}
 
-      {/* Messages */}
+      
       <div className="flex-1 overflow-y-auto px-4 py-3 space-y-4">
         {messages.length === 0 && (
           <div className="text-center text-gray-500 mt-12">
@@ -235,7 +227,7 @@ export function AskAIPanel({ open, onClose, context, onClearContext }: AskAIPane
         <div ref={messagesEndRef} />
       </div>
 
-      {/* Input */}
+      
       <div className="border-t border-white/10 px-4 py-3">
         <form onSubmit={(e) => { e.preventDefault(); sendMessage(); }} className="flex items-center gap-2">
           <input

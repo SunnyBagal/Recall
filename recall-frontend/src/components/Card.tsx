@@ -14,7 +14,6 @@ declare global {
   }
 }
 
-// Fallback icons per content type — used when favicon fails to load
 const typeIcons: Record<ContentType, React.ReactNode> = {
   youtube:   <YoutubeIcon />,
   twitter:   <TwitterIcon />,
@@ -43,9 +42,6 @@ export interface CardProps {
   readOnly?: boolean;
 }
 
-// ── Site logo component with fallback ──
-// Tries to load the actual favicon. If it fails (404, CORS, broken image),
-// falls back to a type-specific icon (YouTube logo, Twitter bird, etc.)
 function SiteLogo({ favicon, type }: { favicon?: string | null; type: ContentType }) {
   const [imgFailed, setImgFailed] = useState(false);
 
@@ -61,7 +57,7 @@ function SiteLogo({ favicon, type }: { favicon?: string | null; type: ContentTyp
     );
   }
 
-  // Fallback: type-specific icon
+  
   return <span className="text-gray-400 [&_svg]:w-4 [&_svg]:h-4">{typeIcons[type] ?? <Globe size={16} />}</span>;
 }
 
@@ -79,13 +75,13 @@ export function Card({
 
   return (
     <div className="p-5 border bg-mycolor rounded-md shadow-md border-gray-100 w-full min-h-72 flex flex-col group">
-      {/* ── Header: site logo + title + actions ── */}
+      
       <div className="flex items-start gap-2">
         <div className="pt-0.5 shrink-0">
           <SiteLogo favicon={favicon} type={type} />
         </div>
         <p className="flex-1 min-w-0 text-sm font-medium truncate">{displayTitle}</p>
-        {/* Action buttons — reveal on hover */}
+        
         <div className="flex items-center gap-1 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity">
           <a
             href={link}
@@ -119,7 +115,7 @@ export function Card({
         </div>
       </div>
 
-      {/* ── Embed area ── */}
+      
       <div className="pt-3 flex-1">
         {type === "youtube" && (
           <iframe
@@ -159,7 +155,7 @@ export function Card({
         )}
       </div>
 
-      {/* ── Summary ── */}
+      
       {processingStatus === "pending" || processingStatus === "processing" ? (
         <div className="mt-3 pt-3 border-t border-gray-200">
           <div className="h-3 bg-gray-200 rounded animate-pulse w-3/4 mb-1.5" />
@@ -171,7 +167,7 @@ export function Card({
         </div>
       ) : null}
 
-      {/* ── Tags ── */}
+      
       {tags && tags.length > 0 && (
         <div className="flex flex-wrap gap-1 mt-2">
           {tags.map((tag) => (

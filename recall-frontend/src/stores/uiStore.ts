@@ -2,24 +2,24 @@ import { create } from "zustand";
 import type { Content, ContentType } from "../hooks/useContent";
 
 interface UIState {
-  // Sidebar
+  
   sidebarOpen: boolean;
   toggleSidebar: () => void;
 
-  // Type filter
+  
   activeFilter: ContentType | null;
   setActiveFilter: (filter: ContentType | null) => void;
 
-  // Tag filter
+  
   activeTag: string | null;
   setActiveTag: (tag: string | null) => void;
 
-  // Search
+  
   searchQuery: string;
   setSearchQuery: (query: string) => void;
   clearSearch: () => void;
 
-  // Ask-AI panel
+  
   aiPanelOpen: boolean;
   toggleAiPanel: () => void;
   closeAiPanel: () => void;
