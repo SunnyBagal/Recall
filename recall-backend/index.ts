@@ -128,12 +128,7 @@ app.post("/api/v1/content", authMiddleware, async (req, res) => {
       return res.status(400).json({ message: "Link is required" });
     }
 
-    
     const detection = detectLinkType(link);
-
-    
-    
-    
     
     const metadata = await fetchMetadata(link, detection.type);
 
