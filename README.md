@@ -1,6 +1,6 @@
 # Recall
 
-**[Live Demo →](https://recall-swart-eight.vercel.app)**
+**[Live Demo →](https://recall.sunnybagal.com)**
 
 A link-saving app where every URL becomes a rich, embedded card — YouTube players, tweet cards, GitHub repo previews, article summaries — all searchable by meaning, not just keywords.
 
