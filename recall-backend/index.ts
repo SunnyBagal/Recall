@@ -21,12 +21,14 @@ const JWT_SECRET = process.env.JWT_SECRET!;
 const app = express();
 app.use(express.json());
 
+const allowed = (process.env.FRONTEND_URLS || "")
+  .split(",")
+  .map((s) => s.trim())
+  .filter(Boolean);
+
 app.use(cors({
-     origin: [
-       "http://localhost:5173",
-       process.env.FRONTEND_URL || "",
-     ].filter(Boolean),
-   }));
+  origin: ["http://localhost:5173", ...allowed],
+}));
 
 app.post("/api/v1/signup", async (req, res) => {
   try {
