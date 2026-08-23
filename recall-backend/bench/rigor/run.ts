@@ -9,10 +9,11 @@
 //   A  sequential scan forced:  SET LOCAL enable_indexscan=off, enable_bitmapscan=off
 //   B  default planner, no overrides
 //   C  the app's scoped override: transaction + SET LOCAL enable_seqscan=off
-//   D  lexical arm alone — ILIKE over title/summary/og_title/og_description
-//      (NOTE: the codebase implements ILIKE substring match, NOT tsvector FTS)
+//   D  lexical arm alone — Postgres FTS: search_vector @@ websearch_to_tsquery,
+//      ORDER BY ts_rank, GIN index available (whether the planner uses it is
+//      captured honestly in the EXPLAIN, not forced)
 //   E  full hybrid path end-to-end at the app layer: the real hybridSearch()
-//      (C-style vector arm + D ILIKE + RRF in JS), measured around the call
+//      (C-style vector arm + D FTS + RRF in JS), measured around the call
 //
 // Protocol: explicit warm pass (full 200-query set once, discarded), then
 // 3 measured rounds x 200 queries per arm; client-side wall time per query.
@@ -56,13 +57,18 @@ const VEC_SQL = `
   order by c.embedding <=> $1::vector asc
   limit ${LIMIT}`;
 
-const ILIKE_SQL = `
+// Mirrors the app's FTS lexical arm (searchService.ts): websearch_to_tsquery
+// appears three times in the text but is IMMUTABLE with an explicit config, so
+// the planner folds it to one tsquery constant (visible in the captured
+// EXPLAIN). numnode guard = the app's empty/stopword-query fallback.
+const FTS_SQL = `
   select ${PROJ}
   from contents c
   inner join users u on c.user_id = u.id
   where c.user_id = $2
-    and (c.title ilike $1 or c.summary ilike $1
-         or c.og_title ilike $1 or c.og_description ilike $1)
+    and (numnode(websearch_to_tsquery('english', $1)) = 0
+         or c.search_vector @@ websearch_to_tsquery('english', $1))
+  order by ts_rank(c.search_vector, websearch_to_tsquery('english', $1)) desc
   limit ${LIMIT}`;
 
 type ArmName = "A" | "B" | "C" | "D" | "E";
@@ -79,7 +85,7 @@ const ARM_SETTINGS: Record<string, string[]> = {
 async function runArmQuery(
   c: pg.Client, arm: ArmName, params: any[],
 ): Promise<{ ms: number; ids: string[] }> {
-  const sqlText = arm === "D" ? ILIKE_SQL : VEC_SQL;
+  const sqlText = arm === "D" ? FTS_SQL : VEC_SQL;
   const settings = ARM_SETTINGS[arm]!;
   const t0 = performance.now();
   let rows: any[];
@@ -95,7 +101,7 @@ async function runArmQuery(
 }
 
 async function explainArm(c: pg.Client, arm: ArmName, params: any[]): Promise<string> {
-  const sqlText = `explain (analyze, buffers) ${arm === "D" ? ILIKE_SQL : VEC_SQL}`;
+  const sqlText = `explain (analyze, buffers) ${arm === "D" ? FTS_SQL : VEC_SQL}`;
   const settings = ARM_SETTINGS[arm]!;
   await c.query("begin");
   for (const s of settings) await c.query(s);
@@ -150,7 +156,7 @@ async function main() {
 
   const userId: string = (await c.query("select id from users limit 1")).rows[0].id;
   const qvecs = Array.from({ length: N_QUERIES }, (_, j) => vectorLiteral(queryEmbedding(j)));
-  const qtexts = textQueries().map((t) => `%${t}%`);
+  const qtexts = textQueries(); // raw query text — websearch_to_tsquery does its own parsing
 
   const paramsFor = (arm: ArmName, j: number) =>
     arm === "D" ? [qtexts[j], userId] : [qvecs[j], userId];
@@ -170,6 +176,18 @@ async function main() {
     }
     console.log();
     results[arm] = { samples };
+    // FTS tokenization check: the 200 fixed text queries were designed for
+    // ILIKE substring matching; verify they still produce hits under
+    // websearch_to_tsquery AND-semantics (phrases are seeded verbatim into
+    // title/summary, so stemming applies to both sides).
+    if (arm === "D") {
+      let hits = 0;
+      for (let j = 0; j < N_QUERIES; j++) {
+        if ((await runArmQuery(c, "D", paramsFor("D", j))).ids.length > 0) hits++;
+      }
+      results.D.hitRate = hits / N_QUERIES;
+      console.log(`arm D: ${hits}/${N_QUERIES} text queries returned >=1 row`);
+    }
     const plan = await explainArm(c, arm, paramsFor(arm, 0));
     writeFileSync(`${outDir}/explain/arm${arm}_scale${scale}.txt`,
       `-- arm ${arm}, scale ${scale}, query #0, settings: ${ARM_SETTINGS[arm]!.join("; ") || "(none — default planner)"}\n${plan}\n`);
@@ -223,7 +241,7 @@ async function main() {
     writeFileSync(`${outDir}/explain/armE_scale${scale}.txt`,
       "-- arm E is the application-layer hybrid path (services/searchService.ts hybridSearch):\n" +
       "--   vector arm = transaction + SET LOCAL enable_seqscan=off (same plan as armC_*.txt)\n" +
-      "--   lexical arm = ILIKE query (same plan as armD_*.txt)\n" +
+      "--   lexical arm = FTS query (same plan as armD_*.txt)\n" +
       "--   fusion = Reciprocal Rank Fusion (k=60) in JS — no SQL, nothing to EXPLAIN\n" +
       "-- Timed at the app layer around hybridSearch(); see raw JSON `phases` for per-phase ms.\n");
     const { db } = await import("../../config/db");

@@ -1,4 +1,4 @@
-import { and, asc, eq, ilike, or, sql } from "drizzle-orm";
+import { and, asc, eq, sql } from "drizzle-orm";
 import { cosineDistance } from "drizzle-orm";
 import { performance } from "node:perf_hooks";
 import { db } from "../config/db";
@@ -10,7 +10,7 @@ import { contents, users } from "../db/schema";
 // code path is completely unchanged.
 export interface HybridSearchTimings {
   vectorMs: number; // pgvector (dense) query
-  keywordMs: number; // ILIKE (lexical) query
+  keywordMs: number; // FTS (lexical) query
   fusionMs: number; // RRF fusion in app code
 }
 
@@ -39,8 +39,9 @@ const baseFields = {
 };
 
 /**
- * Hybrid search: pgvector cosine similarity (dense) + ILIKE substring match
- * (lexical), fused with Reciprocal Rank Fusion (k=60) in application code.
+ * Hybrid search: pgvector cosine similarity (dense) + Postgres full-text
+ * search over the generated search_vector column (lexical), fused with
+ * Reciprocal Rank Fusion (k=60) in application code.
  *
  * This is the SINGLE source of truth for the retrieval path — the /search
  * route handler and the benchmark both call this exact function so the bench
@@ -106,8 +107,22 @@ export async function hybridSearch(
     timings.vectorMs = 0;
   }
 
-  // ---- Lexical / keyword arm (ILIKE substring, not tsvector/FTS) ----------
-  const keywordPattern = `%${query}%`;
+  // ---- Lexical / keyword arm (Postgres FTS over the generated tsvector) ---
+  // search_vector is GENERATED ALWAYS from title/og_title/summary/
+  // og_description (weighted A/B/C/D — see db/schema.ts) and GIN-indexed.
+  //
+  // The tsquery fragment below appears three times in the SQL text, but
+  // websearch_to_tsquery with an EXPLICIT config is IMMUTABLE, so the planner
+  // folds it to a single '...'::tsquery constant at plan time — verified in
+  // the bench's captured EXPLAIN, which shows the folded constant, not three
+  // function calls.
+  //
+  // Empty/stopword-only queries: websearch_to_tsquery returns an EMPTY tsquery
+  // (numnode = 0), and `@@ empty` matches nothing. The numnode guard preserves
+  // the old ILIKE behavior for that case ('%%' matched everything): return up
+  // to LIMIT arbitrary rows. ts_rank against an empty query is 0 for every
+  // row, so the ordering is as arbitrary as the ILIKE path's missing ORDER BY.
+  const tsq = sql`websearch_to_tsquery('english', ${query})`;
   const tk = timings ? performance.now() : 0;
   const keywordResults = await db
     .select(baseFields)
@@ -116,14 +131,10 @@ export async function hybridSearch(
     .where(
       and(
         eq(contents.userId, userId),
-        or(
-          ilike(contents.title, keywordPattern),
-          ilike(contents.summary, keywordPattern),
-          ilike(contents.ogTitle, keywordPattern),
-          ilike(contents.ogDescription, keywordPattern),
-        ),
+        sql`(numnode(${tsq}) = 0 or ${contents.searchVector} @@ ${tsq})`,
       ),
     )
+    .orderBy(sql`ts_rank(${contents.searchVector}, ${tsq}) desc`)
     .limit(LIMIT);
   if (timings) timings.keywordMs = performance.now() - tk;
 

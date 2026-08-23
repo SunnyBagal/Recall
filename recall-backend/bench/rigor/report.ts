@@ -36,8 +36,8 @@ const ARM_DESC: Record<string, string> = {
   A: "sequential scan (SET LOCAL enable_indexscan=off, enable_bitmapscan=off) — exact",
   B: "HNSW available, default planner, no overrides",
   C: "scoped override as implemented: transaction + SET LOCAL enable_seqscan=off",
-  D: "lexical arm alone (ILIKE over title/summary/og_title/og_description)",
-  E: "full hybrid end-to-end at app layer: real hybridSearch() (C-vector + D-ILIKE + RRF)",
+  D: "lexical arm alone (FTS: search_vector @@ websearch_to_tsquery, ts_rank ordered, GIN-indexed)",
+  E: "full hybrid end-to-end at app layer: real hybridSearch() (C-vector + D-FTS + RRF)",
 };
 
 // ---- table ------------------------------------------------------------------
@@ -53,6 +53,38 @@ for (const run of runs) {
       run[arm].recallAt10 != null ? run[arm].recallAt10.toFixed(3) : "—";
     table += `| ${arm} | ${run.meta.scale.toLocaleString("en-US")} | ${f1(s.p50)} | ${f1(s.p95)} | ${rec} | ${s.n} |\n`;
   }
+}
+for (const run of runs) {
+  if (run.D?.hitRate != null) {
+    table += `\nArm D text-query hit rate at ${run.meta.scale.toLocaleString("en-US")} rows: ` +
+      `**${(run.D.hitRate * 100).toFixed(1)}%** of the 200 fixed queries returned ≥1 row under ` +
+      `websearch_to_tsquery semantics.\n`;
+  }
+}
+
+// ---- before/after: ILIKE baseline (commit 7943212) vs this FTS run ----------
+let beforeAfter = "";
+try {
+  const base = JSON.parse(
+    readFileSync("bench/results/7943212-ilike-baseline/raw/scale10000.json", "utf8"),
+  );
+  const cur = runs.find((r) => r.meta.scale === 10000);
+  if (cur && base?.D && base?.E) {
+    const row = (label: string, oldS: any, newS: any) => {
+      const o = stats(oldS.samples), n = stats(newS.samples);
+      return `| ${label} | ${f1(o.p50)} / ${f1(o.p95)} | ${f1(n.p50)} / ${f1(n.p95)} | ${(o.p50 / n.p50).toFixed(1)}× |\n`;
+    };
+    beforeAfter =
+      "\n## Before/after: ILIKE → FTS (10k rows)\n\n" +
+      `Baseline: commit \`7943212\` (ILIKE lexical arm), same protocol/hardware/queries, ` +
+      `[raw samples](../7943212-ilike-baseline/raw/). Every other number in this report is from ` +
+      `the current run only.\n\n` +
+      "| Arm | ILIKE p50/p95 (ms) | FTS p50/p95 (ms) | p50 speedup |\n|---|---:|---:|---:|\n" +
+      row("D (lexical alone)", base.D, cur.D) +
+      row("E (hybrid end-to-end)", base.E, cur.E);
+  }
+} catch {
+  beforeAfter = "\n## Before/after: ILIKE → FTS\n\n_ILIKE baseline raw samples not found — comparison omitted._\n";
 }
 
 // ---- claim check (10k, A vs C) ---------------------------------------------
@@ -86,6 +118,18 @@ if (r10k?.A && r10k?.C) {
       `The full hybrid path (vector + lexical + reciprocal-rank fusion), measured end-to-end at the application layer, runs at p50 ${f1(e.p50)}ms / p95 ${f1(e.p95)}ms on 10,000 rows.`,
     );
   }
+  try {
+    const base = JSON.parse(
+      readFileSync("bench/results/7943212-ilike-baseline/raw/scale10000.json", "utf8"),
+    );
+    if (base?.D && base?.E && r10k.D && r10k.E) {
+      const oD = stats(base.D.samples), nD = stats(r10k.D.samples);
+      const oE = stats(base.E.samples), nE = stats(r10k.E.samples);
+      sentences.push(
+        `Replacing the ILIKE lexical arm with a weighted tsvector + GIN full-text index cut the lexical query's p50 from ${f1(oD.p50)}ms to ${f1(nD.p50)}ms (${(oD.p50 / nD.p50).toFixed(1)}×) and the end-to-end hybrid p50 from ${f1(oE.p50)}ms to ${f1(nE.p50)}ms at 10,000 rows (same protocol, hardware, and query set; ILIKE baseline at commit 7943212).`,
+      );
+    }
+  } catch { /* baseline absent — before/after sentence omitted */ }
 }
 const r1k = runs.find((r) => r.meta.scale === 1000);
 const r50k = runs.find((r) => r.meta.scale === 50000);
@@ -113,7 +157,7 @@ if (r10k?.E?.phases) {
     "\n## Arm E phase breakdown (10k rows, sequential awaits)\n\n" +
     "| Phase | p50 (ms) | p95 (ms) |\n|---|---:|---:|\n" +
     line("pgvector query (C-style)", p.vector) +
-    line("ILIKE lexical query", p.keyword) +
+    line("FTS lexical query", p.keyword) +
     line("RRF fusion (in JS)", p.fusion);
 }
 
@@ -143,10 +187,15 @@ const report = `# Recall retrieval benchmark — rigor run
 
 ## Honesty caveats — read before quoting
 
-1. **The lexical arm is ILIKE, not FTS.** The codebase (\`services/searchService.ts\`) implements
-   \`ILIKE '%query%'\` over title/summary/og_title/og_description — there is no tsvector column or
-   GIN index anywhere in the schema. Arm D measures what is actually implemented. Any claim that
-   says "Postgres FTS" is not supported by this codebase.
+1. **The lexical arm is now real Postgres FTS** (this commit): a \`GENERATED ALWAYS ... STORED\`
+   tsvector over title/og_title/summary/og_description (weighted A/B/C/D) with a GIN index,
+   queried via \`search_vector @@ websearch_to_tsquery('english', $q)\` and ordered by
+   \`ts_rank\`. Before this commit the lexical arm was \`ILIKE '%query%'\` — the before/after
+   section below compares against the ILIKE baseline measured at commit \`7943212\`
+   ([raw samples](../7943212-ilike-baseline/raw/)). Whether the planner actually uses the GIN
+   index is captured in arm D's EXPLAIN, not forced. The 200 text queries are unchanged from the
+   ILIKE run; under websearch_to_tsquery they become AND-of-terms with stemming (see arm D hit
+   rate in Results — any query-generation change would be noted here, none was made).
 2. **Embeddings are synthetic random unit vectors** (deterministic, fixed-seed). Latency and
    index-vs-scan comparisons are valid (HNSW does the same work over any 1536-dim unit vector);
    random vectors are close to a worst case for HNSW recall, so real-embedding recall@10 is
@@ -169,7 +218,8 @@ const report = `# Recall retrieval benchmark — rigor run
 - Dedicated databases \`recall_bench_{1000,10000,50000}\`, dropped and rebuilt per seed. Dev data untouched.
 - 10,000 / 1,000 / 50,000 deterministic rows (fixed-seed mulberry32 PRNG; row *i* is identical at
   every scale), each with a 1536-dim random **unit** embedding and generated article-length text;
-  200 of the rows' title/summary phrases double as the text-query set so ILIKE has real hits.
+  200 of the rows' title/summary phrases double as the text-query set so the lexical arm has
+  real hits (phrases are seeded verbatim, so FTS stemming applies to both sides).
 - 200 fixed-seed query vectors + 200 fixed text queries; the same query set for every arm.
 - **Cache policy: warm.** Explicit warm pass (the full 200-query set once, discarded) per arm,
   then 3 measured rounds × 200 queries. No OS/PG cache drops between rounds. Percentiles are
@@ -186,7 +236,7 @@ The vector SQL is byte-equivalent to the app's query: same projection, \`users\`
 ## Results
 
 ${table}
-${phaseSection}
+${phaseSection}${beforeAfter}
 ## Claim check
 
 ${claim}

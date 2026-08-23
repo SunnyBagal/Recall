@@ -1,4 +1,13 @@
-import { pgTable, pgEnum, uuid, text, timestamp, vector, index } from "drizzle-orm/pg-core";
+import { pgTable, pgEnum, uuid, text, timestamp, vector, index, customType } from "drizzle-orm/pg-core";
+import { sql } from "drizzle-orm";
+
+// Drizzle has no built-in tsvector type; the column is only ever written by
+// Postgres itself (GENERATED ALWAYS ... STORED) and read via SQL operators.
+const tsvector = customType<{ data: string }>({
+  dataType() {
+    return "tsvector";
+  },
+});
 
 export const contentTypeEnum = pgEnum("content_type", [
   "youtube",
@@ -43,6 +52,13 @@ export const contents = pgTable("contents", {
   tags:             text("tags").array().default([]),
   processingStatus: processingStatusEnum("processing_status").notNull().default("pending"),
   embedding:        vector("embedding", { dimensions: 1536 }),
+  // FTS document for the lexical search arm (drizzle/0002_fts_search_vector.sql).
+  // Weighted by field importance: title=A, og_title=B, summary=C,
+  // og_description=D. coalesce keeps the expression null-safe; the explicit
+  // 'english' config keeps it IMMUTABLE (required for a generated column).
+  searchVector:     tsvector("search_vector").generatedAlwaysAs(
+    sql`setweight(to_tsvector('english', coalesce(title, '')), 'A') || setweight(to_tsvector('english', coalesce(og_title, '')), 'B') || setweight(to_tsvector('english', coalesce(summary, '')), 'C') || setweight(to_tsvector('english', coalesce(og_description, '')), 'D')`,
+  ),
   createdAt:        timestamp("created_at").defaultNow().notNull(),
   updatedAt:        timestamp("updated_at").defaultNow().notNull(),
 }, (t) => [
@@ -58,6 +74,8 @@ export const contents = pgTable("contents", {
   index("idx_contents_embedding_hnsw")
     .using("hnsw", t.embedding.op("vector_cosine_ops"))
     .with({ m: 16, ef_construction: 64 }),
+  // GIN index for the FTS lexical arm (search_vector @@ websearch_to_tsquery).
+  index("idx_contents_search_vector_gin").using("gin", t.searchVector),
 ]);
 
 export const shareLinks = pgTable("share_links", {

@@ -71,6 +71,12 @@ async function main() {
       tags text[] default '{}',
       processing_status processing_status not null default 'pending',
       embedding vector(${DIM}),
+      search_vector tsvector generated always as (
+        setweight(to_tsvector('english', coalesce(title, '')), 'A') ||
+        setweight(to_tsvector('english', coalesce(og_title, '')), 'B') ||
+        setweight(to_tsvector('english', coalesce(summary, '')), 'C') ||
+        setweight(to_tsvector('english', coalesce(og_description, '')), 'D')
+      ) stored,
       created_at timestamp not null default now(),
       updated_at timestamp not null default now()
     );
@@ -130,6 +136,13 @@ async function main() {
        with (m = ${HNSW.m}, ef_construction = ${HNSW.ef_construction})`,
   );
   console.log(`hnsw index built in ${((Date.now() - ti) / 1000).toFixed(1)}s (m=${HNSW.m}, ef_construction=${HNSW.ef_construction})`);
+
+  // GIN index for the FTS arm — same definition as drizzle/0002.
+  const tg = Date.now();
+  await c.query(
+    `create index idx_contents_search_vector_gin on contents using gin (search_vector)`,
+  );
+  console.log(`gin index built in ${((Date.now() - tg) / 1000).toFixed(1)}s`);
   await c.query(`analyze contents`);
 
   const n = await c.query(`select count(*)::int as n from contents where embedding is not null`);
