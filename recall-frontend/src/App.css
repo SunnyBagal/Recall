@@ -17,3 +17,29 @@ body {
   background-color:#1B1212	
 
 }
+
+/* Drifting brand marks behind the auth pages (see components/FloatingIcons). */
+@keyframes floating-mark-drift {
+  0%,
+  100% {
+    transform: translate3d(0, 0, 0) rotate(var(--tilt, 0deg));
+  }
+  50% {
+    transform: translate3d(calc(var(--drift, 1) * 10px), -22px, 0)
+      rotate(calc(var(--tilt, 0deg) * -1));
+  }
+}
+
+.floating-mark {
+  animation-name: floating-mark-drift;
+  animation-timing-function: ease-in-out;
+  animation-iteration-count: infinite;
+  will-change: transform;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .floating-mark {
+    animation: none;
+    transform: rotate(var(--tilt, 0deg));
+  }
+}

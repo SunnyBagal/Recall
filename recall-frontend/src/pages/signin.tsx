@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { Button } from "../components/Button";
 import { LogoIcon } from "../icons/LogoIcon";
+import { FloatingIcons } from "../components/FloatingIcons";
 import { useNavigate } from "react-router-dom";
 import { api } from "../lib/api";
 import { useAuthStore } from "../stores/authStore";
@@ -22,8 +23,10 @@ export function Signin() {
   }
 
   return (
-    <div className="min-h-screen flex items-center justify-center px-4">
-      <div className="w-full max-w-md">
+    <div className="relative min-h-screen flex items-center justify-center px-4 py-10">
+      <FloatingIcons />
+
+      <div className="relative z-10 w-full max-w-md">
         <div className="flex flex-col items-center mb-8">
           <div className="text-white"><LogoIcon size="xl" /></div>
           <h1 className="mt-3 text-2xl font-semibold tracking-tight text-white">Welcome back</h1>
