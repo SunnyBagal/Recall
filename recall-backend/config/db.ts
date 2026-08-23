@@ -11,5 +11,8 @@ if (!DATABASE_URL) {
 export const db = drizzle({
   connection: DATABASE_URL,
   schema,
-  logger: true  
+  // SQL logging on by default (unchanged for normal dev). The benchmark sets
+  // DRIZZLE_LOGGER=false so 500+ queries with 1536-dim vector params don't
+  // flood stdout.
+  logger: process.env.DRIZZLE_LOGGER !== "false"
 });

@@ -1,4 +1,4 @@
-import { pgTable, pgEnum, uuid, text, timestamp, vector } from "drizzle-orm/pg-core";
+import { pgTable, pgEnum, uuid, text, timestamp, vector, index } from "drizzle-orm/pg-core";
 
 export const contentTypeEnum = pgEnum("content_type", [
   "youtube",
@@ -45,7 +45,20 @@ export const contents = pgTable("contents", {
   embedding:        vector("embedding", { dimensions: 1536 }),
   createdAt:        timestamp("created_at").defaultNow().notNull(),
   updatedAt:        timestamp("updated_at").defaultNow().notNull(),
-});
+}, (t) => [
+  // Approximate-NN (HNSW) index for cosine similarity over the 1536-dim embedding.
+  // Opclass MUST be `vector_cosine_ops` to match the `<=>` operator emitted by
+  // drizzle's cosineDistance() in the search query — an opclass mismatch means
+  // the planner silently ignores the index and falls back to a sequential scan.
+  // Default HNSW build params: m = 16, ef_construction = 64.
+  // NOTE: HNSW is APPROXIMATE. Query-time recall is tuned via `SET hnsw.ef_search`
+  // (pgvector default = 40); not changed here.
+  // NOTE: the index is only usable when the query does `ORDER BY embedding <=> $vec`
+  // (raw distance, ascending) — see services/searchService.ts.
+  index("idx_contents_embedding_hnsw")
+    .using("hnsw", t.embedding.op("vector_cosine_ops"))
+    .with({ m: 16, ef_construction: 64 }),
+]);
 
 export const shareLinks = pgTable("share_links", {
   id:     uuid("id").primaryKey().defaultRandom(),

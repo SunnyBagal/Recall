@@ -3,9 +3,10 @@ import jwt from "jsonwebtoken";
 import argon2 from "argon2";
 import cors from "cors";
 import { nanoid } from "nanoid";
-import { eq, or, and, ilike, sql, desc, gt } from "drizzle-orm";
+import { eq, or, and, sql, desc, gt } from "drizzle-orm";
 import { cosineDistance } from "drizzle-orm";
 import { authMiddleware } from "./middleware/middleware";
+import { hybridSearch } from "./services/searchService";
 
 import { db } from "./config/db";
 import { users, contents, shareLinks } from "./db/schema";
@@ -48,16 +49,12 @@ app.post("/api/v1/signup", async (req, res) => {
     });
 
     
-    const [user] = await db
-      .insert(users)
-      .values({
+    const [user] = await db.insert(users).values({
         username,
         email,
         password: hashedPassword,
-      })
-      .returning();
+      }).returning();
       
-    
     return res.status(201).json({
       message: "User created",
       userId: user.id,      
@@ -76,8 +73,6 @@ app.post("/api/v1/signup", async (req, res) => {
 app.post("/api/v1/signin", async (req, res) => {
   try {
     const { username, email, password } = req.body ?? {};
-
-    
     
     const conditions = [];
     if (username) conditions.push(eq(users.username, username));
@@ -156,14 +151,6 @@ app.post("/api/v1/content", authMiddleware, async (req, res) => {
         processingStatus: "pending",
       })
       .returning();
-
-    
-    
-    
-    
-    
-    
-    
     
     await contentQueue.add(
       "process-content",       
@@ -189,9 +176,6 @@ app.get("/api/v1/content", authMiddleware, async (req, res) => {
   try {
     const result = await db
       .select({
-        
-        
-        
         id: contents.id,
         title: contents.title,
         link: contents.link,
@@ -329,106 +313,11 @@ app.get("/api/v1/search", authMiddleware, async (req, res) => {
 
     const userId = req.userId!;
 
-    
-    
+    // Embed the query live (OpenAI) for the end-to-end path, then run the
+    // shared hybrid retrieval (pgvector + ILIKE + RRF). The exact same
+    // hybridSearch() is what the benchmark's retrieval-only mode calls.
     const queryEmbedding = await generateEmbedding(query);
-
-    let vectorResults: any[] = [];
-    if (queryEmbedding) {
-      
-      
-      const similarity = sql<number>`1 - (${cosineDistance(contents.embedding, queryEmbedding)})`;
-
-      vectorResults = await db
-        .select({
-          id: contents.id,
-          title: contents.title,
-          link: contents.link,
-          type: contents.type,
-          tags: contents.tags,
-          ogTitle: contents.ogTitle,
-          ogDescription: contents.ogDescription,
-          ogImage: contents.ogImage,
-          ogSiteName: contents.ogSiteName,
-          favicon: contents.favicon,
-          embedUrl: contents.embedUrl,
-          summary: contents.summary,
-          processingStatus: contents.processingStatus,
-          createdAt: contents.createdAt,
-          username: users.username,
-          similarity,
-        })
-        .from(contents)
-        .innerJoin(users, eq(contents.userId, users.id))
-        .where(and(eq(contents.userId, userId), gt(similarity, 0.3)))
-        .orderBy(desc(similarity))
-        .limit(10);
-    }
-
-    
-    
-    const keywordPattern = `%${query}%`;
-    const keywordResults = await db
-      .select({
-        id: contents.id,
-        title: contents.title,
-        link: contents.link,
-        type: contents.type,
-        tags: contents.tags,
-        ogTitle: contents.ogTitle,
-        ogDescription: contents.ogDescription,
-        ogImage: contents.ogImage,
-        ogSiteName: contents.ogSiteName,
-        favicon: contents.favicon,
-        embedUrl: contents.embedUrl,
-        summary: contents.summary,
-        processingStatus: contents.processingStatus,
-        createdAt: contents.createdAt,
-        username: users.username,
-      })
-      .from(contents)
-      .innerJoin(users, eq(contents.userId, users.id))
-      .where(
-        and(
-          eq(contents.userId, userId),
-          or(
-            ilike(contents.title, keywordPattern),
-            ilike(contents.summary, keywordPattern),
-            ilike(contents.ogTitle, keywordPattern),
-            ilike(contents.ogDescription, keywordPattern)
-          )
-        )
-      )
-      .limit(10);
-
-    
-    
-    
-    const scores = new Map<string, { score: number; item: any }>();
-
-    vectorResults.forEach((item, idx) => {
-      const existing = scores.get(item.id);
-      const rrfScore = 1 / (idx + 60);
-      scores.set(item.id, {
-        score: (existing?.score ?? 0) + rrfScore,
-        item,
-      });
-    });
-
-    keywordResults.forEach((item, idx) => {
-      const existing = scores.get(item.id);
-      const rrfScore = 1 / (idx + 60);
-      scores.set(item.id, {
-        score: (existing?.score ?? 0) + rrfScore,
-        item: existing?.item ?? item,
-      });
-    });
-
-    
-    const merged = Array.from(scores.values())
-      .sort((a, b) => b.score - a.score)
-      .slice(0, 10)
-      .map(({ item }) => item);
+    const merged = await hybridSearch(userId, query, queryEmbedding);
 
     res.json({ results: merged, total: merged.length });
   } catch (err) {
@@ -448,10 +337,6 @@ app.post("/api/v1/chat", authMiddleware, async (req, res) => {
     const userId = req.userId!;
     let relevantContent: any[] = [];
 
-    
-    
-    
-    
     if (cardId) {
       const [card] = await db
         .select()
@@ -495,7 +380,7 @@ app.post("/api/v1/chat", authMiddleware, async (req, res) => {
       }
     }
 
-    
+  
     
     if (relevantContent.length === 0) {
       relevantContent = await db
