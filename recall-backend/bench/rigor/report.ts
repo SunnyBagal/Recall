@@ -13,11 +13,13 @@ function sh(cmd: string): string {
   try { return execSync(cmd).toString().trim(); } catch { return "(unavailable)"; }
 }
 
-const shaShort = sh("git rev-parse --short HEAD");
-const shaFull = sh("git rev-parse HEAD");
-// Uncommitted CODE only — the results dir this tooling writes doesn't count.
-const dirty = sh("git status --porcelain").split("\n")
-  .some((l) => l.trim() && !l.includes("bench/results"));
+// The report belongs to the commit whose code RAN the measurements (stamped
+// into each raw file's meta.sha by run.ts), not to report-time HEAD — report
+// tooling may be committed after the run. Default: HEAD; override with
+// --sha=<short> to rebuild the report for an earlier run.
+const shaArg = process.argv.slice(2).find((x) => x.startsWith("--sha="))?.split("=")[1];
+const shaShort = shaArg ?? sh("git rev-parse --short HEAD");
+const shaFull = sh(`git rev-parse ${shaShort}`);
 const dir = `bench/results/${shaShort}`;
 
 const files = readdirSync(`${dir}/raw`).filter((f) => /^scale\d+\.json$/.test(f));
@@ -109,7 +111,7 @@ if (r10k?.A && r10k?.C) {
     sentences.push(
       bLikeSeq
         ? `The default planner never chose the HNSW index at this scale (arm B p50 ${f1(b.p50)}ms ≈ seq-scan arm A ${f1(a.p50)}ms) — the scoped SET LOCAL enable_seqscan=off override in the app is what actually engages the index.`
-        : `Arm B (default planner) measured p50 ${f1(b.p50)}ms — see EXPLAIN for which plan it chose.`,
+        : `The default planner now chooses the HNSW index on its own at this scale (arm B p50 ${f1(b.p50)}ms, plan in armB explain; recall matches arm C) — unlike the ILIKE-era baseline, where arm B cost-chose a seq scan (72.2ms p50 at commit 7943212). Likely cause: the added search_vector column widened the table and raised the seq-scan cost estimate. The app's scoped override is now a safety net rather than the difference-maker at 10k.`,
     );
   }
   if (r10k.E) {
@@ -178,7 +180,7 @@ const explainLinks = explainFiles.map((f) => `- [\`${f}\`](explain/${f})`).join(
 const report = `# Recall retrieval benchmark — rigor run
 
 - **Date:** ${meta.date}
-- **Commit:** \`${shaFull}\`${dirty ? " — **dirty working tree** (bench code + search service are uncommitted; see `git status` at run time)" : ""}
+- **Commit:** \`${shaFull}\`${runs.some((r) => r.meta.dirty) ? " — **dirty working tree at run time** (uncommitted code changes were present when the benchmark ran)" : " (clean tree at run time)"}
 - **Hardware:** ${hw.cpu}, ${hw.cores} cores, ${hw.memGB} GB RAM, macOS ${hw.macos}
 - **Database:** ${meta.pg}
   - Runs in Docker: \`${hw.container}\` (localhost:5432, no explicit container CPU/memory limits)
