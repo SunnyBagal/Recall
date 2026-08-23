@@ -35,3 +35,6 @@ report.[0-9]_.[0-9]_.[0-9]_.[0-9]_.json
 
 # benchmark: locally-generated query embedding cache
 bench/query-embeddings.json
+
+# local database backups (never commit)
+backups/
