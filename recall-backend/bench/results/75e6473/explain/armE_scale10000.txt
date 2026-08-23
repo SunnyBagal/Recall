@@ -1,0 +1,5 @@
+-- arm E is the application-layer hybrid path (services/searchService.ts hybridSearch):
+--   vector arm = transaction + SET LOCAL enable_seqscan=off (same plan as armC_*.txt)
+--   lexical arm = FTS query (same plan as armD_*.txt)
+--   fusion = Reciprocal Rank Fusion (k=60) in JS — no SQL, nothing to EXPLAIN
+-- Timed at the app layer around hybridSearch(); see raw JSON `phases` for per-phase ms.

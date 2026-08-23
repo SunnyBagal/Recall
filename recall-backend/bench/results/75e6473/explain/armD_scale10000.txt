@@ -1,0 +1,26 @@
+-- arm D, scale 10000, query #0, settings: (none — default planner)
+Limit  (cost=1578.90..1578.93 rows=10 width=852) (actual time=1.396..1.398 rows=10.00 loops=1)
+  Buffers: shared hit=707
+  ->  Sort  (cost=1578.90..1580.88 rows=791 width=852) (actual time=1.396..1.397 rows=10.00 loops=1)
+        Sort Key: (ts_rank(c.search_vector, '''embed'' & ''build'' & ''kubernet'''::tsquery)) DESC
+        Sort Method: top-N heapsort  Memory: 45kB
+        Buffers: shared hit=707
+        ->  Nested Loop  (cost=34.04..1561.81 rows=791 width=852) (actual time=0.469..1.150 rows=807.00 loops=1)
+              Buffers: shared hit=707
+              ->  Index Scan using users_pkey on users u  (cost=0.15..8.17 rows=1 width=48) (actual time=0.002..0.002 rows=1.00 loops=1)
+                    Index Cond: (id = '8cf45862-2706-40b3-b100-0c683cf03b51'::uuid)
+                    Index Searches: 1
+                    Buffers: shared hit=2
+              ->  Bitmap Heap Scan on contents c  (cost=33.89..1543.75 rows=791 width=1532) (actual time=0.466..0.766 rows=807.00 loops=1)
+                    Recheck Cond: (search_vector @@ '''embed'' & ''build'' & ''kubernet'''::tsquery)
+                    Filter: (user_id = '8cf45862-2706-40b3-b100-0c683cf03b51'::uuid)
+                    Heap Blocks: exact=697
+                    Buffers: shared hit=705
+                    ->  Bitmap Index Scan on idx_contents_search_vector_gin  (cost=0.00..33.69 rows=791 width=0) (actual time=0.419..0.419 rows=807.00 loops=1)
+                          Index Cond: (search_vector @@ '''embed'' & ''build'' & ''kubernet'''::tsquery)
+                          Index Searches: 1
+                          Buffers: shared hit=8
+Planning:
+  Buffers: shared hit=1
+Planning Time: 0.051 ms
+Execution Time: 1.409 ms
