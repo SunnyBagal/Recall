@@ -60,8 +60,6 @@ app.post("/api/v1/signup", async (req, res) => {
       userId: user.id,      
     });
   } catch (err: any) {
-    
-    
     if (err.code === "23505") {
       return res.status(409).json({ message: "Email or username already taken" });
     }
@@ -262,7 +260,11 @@ app.post("/api/v1/brain/share", authMiddleware, async (req, res) => {
       hash,
     });
 
-    res.json({ hash: "/share/" + hash });
+    // Bare hash only — the frontend builds the full /share/<hash> URL. The old
+    // "/share/" + hash here produced /share//share/<hash> links that fell into
+    // the router's catch-all and bounced visitors to /signup (and made this
+    // branch inconsistent with the existing-link branch above).
+    res.json({ hash });
   } catch (err) {
     console.error(err);
     res.status(500).json({ message: "Failed to create share link" });
