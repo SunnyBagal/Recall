@@ -49,7 +49,7 @@ const UA_PROFILES: Array<{ label: string; headers: Record<string, string> }> = [
 // 200, so status alone can't catch them — without this check the wall's own
 // <title> ("Just a moment...", "Attention Required! | Cloudflare") gets stored
 // as the article title and its body text gets summarized and embedded.
-const CHALLENGE_TITLE = /just a moment|attention required|access denied|security check|are you a robot|enable (javascript|cookies)|verifying you are human|ddos protection/i;
+export const CHALLENGE_TITLE = /just a moment|attention required|access denied|security check|are you a robot|enable (javascript|cookies)|verifying you are human|ddos protection/i;
 
 function looksLikeChallenge(document: Doc): boolean {
   const title = document.querySelector("title")?.textContent?.trim() ?? "";
