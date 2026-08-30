@@ -70,7 +70,7 @@ export function CreateContentModel({ open, onClose }: CreateContentModelProps) {
           </div>
           <div>
             <label className="text-sm font-medium text-gray-700 mb-1 block">
-              Title <span className="text-gray-400">(optional — auto-detected)</span>
+              Title <span className="text-gray-400">(optional, auto-detected)</span>
             </label>
             <input
               placeholder="Custom title for this link"
@@ -82,7 +82,7 @@ export function CreateContentModel({ open, onClose }: CreateContentModelProps) {
         </div>
 
         <p className="text-xs text-gray-400 mt-3">
-          Paste any URL the type is detected automatically.
+          Paste any URL. The type is detected automatically.
         </p>
 
         {error && <p className="text-sm text-red-500 mt-2">{error}</p>}
