@@ -82,7 +82,7 @@ export function ShareBrainModal({ open, onClose }: Props) {
         {phase.status === "shared" && (
           <div className="space-y-4">
             <p className="text-sm text-gray-400">
-              Anyone with this link can browse your saved content — read-only, no account needed.
+              Anyone with this link can browse your saved content. Read-only, no account needed.
             </p>
 
             
