@@ -84,7 +84,14 @@ function fallbackFromUrl(rawUrl: string): {
       : null;
     const host = url.hostname.replace(/^www\./, "");
     const ogSiteName = host.split(".")[0]!.replace(/\b\w/g, (c) => c.toUpperCase());
-    return { ogTitle, ogSiteName, favicon: `${url.origin}/favicon.ico` };
+    // When a site blocks us we never saw its <link rel="icon">, and guessing
+    // /favicon.ico often misses (Medium serves its icon from miro.medium.com).
+    // Google's favicon service resolves the real mark from the domain alone, so
+    // the card still shows the site's logo instead of a generic file glyph.
+    // Note: this URL is loaded by the visitor's browser, so Google sees the
+    // request; it is only used for pages we could not read.
+    const favicon = `https://www.google.com/s2/favicons?domain=${host}&sz=64`;
+    return { ogTitle, ogSiteName, favicon };
   } catch {
     return { ogTitle: null, ogSiteName: null, favicon: null };
   }
