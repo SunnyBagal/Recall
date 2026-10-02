@@ -124,63 +124,63 @@ export async function processContent(job: ContentJob, deps: WorkerDeps) {
 // by tests. Same startup order as before: database check, Redis + queue,
 // Anthropic client, embeddings, then the Worker.
 if (import.meta.main) {
-const db = createDb(databaseUrlOrExit());
-// createQueue() also builds the content queue, which the worker never uses —
-// config/queue.ts always did that on import, so it is kept as-is.
-const { redisConnection } = createQueue();
-const anthropic = new Anthropic();
-const generateEmbedding = createGenerateEmbedding();
+  const db = createDb(databaseUrlOrExit());
+  // createQueue() also builds the content queue, which the worker never uses —
+  // config/queue.ts always did that on import, so it is kept as-is.
+  const { redisConnection } = createQueue();
+  const anthropic = new Anthropic();
+  const generateEmbedding = createGenerateEmbedding();
 
-const deps: WorkerDeps = {
-  db,
-  generateSummaryAndTags: (text, title, contentType) =>
-    generateSummaryAndTags(anthropic, text, title, contentType),
-  generateEmbedding,
-};
+  const deps: WorkerDeps = {
+    db,
+    generateSummaryAndTags: (text, title, contentType) =>
+      generateSummaryAndTags(anthropic, text, title, contentType),
+    generateEmbedding,
+  };
 
-const worker = new Worker<ContentJobData>(
-  "content-processing",
-  (job) => processContent(job, deps),
-  {
-    connection: redisConnection,
-    concurrency: 3,         
+  const worker = new Worker<ContentJobData>(
+    "content-processing",
+    (job) => processContent(job, deps),
+    {
+      connection: redisConnection,
+      concurrency: 3,         
     
     
     
-  }
-);
+    }
+  );
 
-worker.on("completed", (job) => {
-  console.log(`[Worker] Job ${job.id} completed`);
-});
+  worker.on("completed", (job) => {
+    console.log(`[Worker] Job ${job.id} completed`);
+  });
 
-worker.on("failed", (job, err) => {
-  console.error(`[Worker] Job ${job?.id} failed:`, err.message);
-  if (job && job.attemptsMade >= (job.opts.attempts ?? 3)) {
-    console.error(`[Worker] Job ${job.id} exhausted all retries — moving to DLQ`);
+  worker.on("failed", (job, err) => {
+    console.error(`[Worker] Job ${job?.id} failed:`, err.message);
+    if (job && job.attemptsMade >= (job.opts.attempts ?? 3)) {
+      console.error(`[Worker] Job ${job.id} exhausted all retries — moving to DLQ`);
     
-    db.update(contents)
-      .set({ processingStatus: "failed" })
-      .where(eq(contents.id, job.data.contentId))
-      .catch(console.error);
-  }
-});
+      db.update(contents)
+        .set({ processingStatus: "failed" })
+        .where(eq(contents.id, job.data.contentId))
+        .catch(console.error);
+    }
+  });
 
-worker.on("error", (err) => {
-  console.error("[Worker] Worker error:", err);
-});
+  worker.on("error", (err) => {
+    console.error("[Worker] Worker error:", err);
+  });
 
-console.log("[Worker] Content processing worker started — waiting for jobs...");
-console.log("[Worker] Press Ctrl+C to stop");
+  console.log("[Worker] Content processing worker started — waiting for jobs...");
+  console.log("[Worker] Press Ctrl+C to stop");
 
-process.on("SIGINT", async () => {
-  console.log("\n[Worker] Shutting down gracefully...");
-  await worker.close();
-  process.exit(0);
-});
+  process.on("SIGINT", async () => {
+    console.log("\n[Worker] Shutting down gracefully...");
+    await worker.close();
+    process.exit(0);
+  });
 
-process.on("SIGTERM", async () => {
-  await worker.close();
-  process.exit(0);
-});
+  process.on("SIGTERM", async () => {
+    await worker.close();
+    process.exit(0);
+  });
 }
