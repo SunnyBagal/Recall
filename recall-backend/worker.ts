@@ -3,19 +3,31 @@
 import "dotenv/config";
 import { Worker, type Job } from "bullmq";
 import { eq } from "drizzle-orm";
-import { db } from "./config/db";
+import Anthropic from "@anthropic-ai/sdk";
+import { createDb, databaseUrlOrExit, type Db } from "./config/db";
 import { contents } from "./db/schema";
-import { redisConnection } from "./config/queue";
+import { createQueue } from "./config/queue";
 import { detectLinkType } from "./services/linkDetector";
 import { extractText } from "./services/textExtractor";
-import { generateSummaryAndTags } from "./services/aiProcessor";
-import { generateEmbedding } from "./services/embeddings";
+import { generateSummaryAndTags, type GenerateSummaryAndTags } from "./services/aiProcessor";
+import { createGenerateEmbedding, type GenerateEmbedding } from "./services/embeddings";
 
 interface ContentJobData {
   contentId: string;
 }
 
-async function processContent(job: Job<ContentJobData>) {
+export interface WorkerDeps {
+  db: Db;
+  generateSummaryAndTags: GenerateSummaryAndTags;
+  generateEmbedding: GenerateEmbedding;
+}
+
+// The parts of a BullMQ job that processContent reads, so tests can pass a
+// plain object.
+export type ContentJob = Pick<Job<ContentJobData>, "data" | "attemptsMade">;
+
+export async function processContent(job: ContentJob, deps: WorkerDeps) {
+  const { db, generateSummaryAndTags, generateEmbedding } = deps;
   const { contentId } = job.data;
 
   console.log(`[Worker] Processing content ${contentId} (attempt ${job.attemptsMade + 1})`);
@@ -108,9 +120,27 @@ async function processContent(job: Job<ContentJobData>) {
   );
 }
 
+// Entry point: only when run directly (`bun run worker.ts`), not when imported
+// by tests. Same startup order as before: database check, Redis + queue,
+// Anthropic client, embeddings, then the Worker.
+if (import.meta.main) {
+const db = createDb(databaseUrlOrExit());
+// createQueue() also builds the content queue, which the worker never uses —
+// config/queue.ts always did that on import, so it is kept as-is.
+const { redisConnection } = createQueue();
+const anthropic = new Anthropic();
+const generateEmbedding = createGenerateEmbedding();
+
+const deps: WorkerDeps = {
+  db,
+  generateSummaryAndTags: (text, title, contentType) =>
+    generateSummaryAndTags(anthropic, text, title, contentType),
+  generateEmbedding,
+};
+
 const worker = new Worker<ContentJobData>(
-  "content-processing",     
-  processContent,
+  "content-processing",
+  (job) => processContent(job, deps),
   {
     connection: redisConnection,
     concurrency: 3,         
@@ -153,3 +183,4 @@ process.on("SIGTERM", async () => {
   await worker.close();
   process.exit(0);
 });
+}

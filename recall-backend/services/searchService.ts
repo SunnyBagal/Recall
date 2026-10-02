@@ -1,7 +1,7 @@
 import { and, asc, eq, sql } from "drizzle-orm";
 import { cosineDistance } from "drizzle-orm";
 import { performance } from "node:perf_hooks";
-import { db } from "../config/db";
+import type { Db } from "../config/db";
 import { contents, users } from "../db/schema";
 
 // Optional per-arm timing sink for benchmarking. When a caller passes one,
@@ -53,6 +53,7 @@ const baseFields = {
  * + fusion latency from the external embedding call.
  */
 export async function hybridSearch(
+  db: Db,
   userId: string,
   query: string,
   queryEmbedding: number[] | null,

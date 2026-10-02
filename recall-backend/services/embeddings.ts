@@ -1,10 +1,15 @@
-const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
+export type GenerateEmbedding = (text: string) => Promise<number[] | null>;
 
+// Called once at startup by the entry points; tests inject a fake
+// GenerateEmbedding instead (or call this with a key and a stubbed fetch).
+export function createGenerateEmbedding(
+  OPENAI_API_KEY: string | undefined = process.env.OPENAI_API_KEY
+): GenerateEmbedding {
 if (!OPENAI_API_KEY) {
   console.warn("[Embedding] OPENAI_API_KEY not set — embeddings will be skipped");
 }
 
-export async function generateEmbedding(text: string): Promise<number[] | null> {
+return async function generateEmbedding(text: string): Promise<number[] | null> {
   if (!OPENAI_API_KEY) return null;
 
   try {
@@ -34,4 +39,5 @@ export async function generateEmbedding(text: string): Promise<number[] | null> 
     console.error("[Embedding] Failed:", (err as Error).message);
     return null;
   }
+}
 }

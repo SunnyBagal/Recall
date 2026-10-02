@@ -17,11 +17,15 @@
 // written without --apply.
 
 import pg from "pg";
+import Anthropic from "@anthropic-ai/sdk";
 import { CHALLENGE_TITLE, fetchMetadata } from "../services/metadataFetcher";
 import { detectLinkType } from "../services/linkDetector";
 import { extractText } from "../services/textExtractor";
 import { generateSummaryAndTags } from "../services/aiProcessor";
-import { generateEmbedding } from "../services/embeddings";
+import { createGenerateEmbedding } from "../services/embeddings";
+
+const anthropic = new Anthropic();
+const generateEmbedding = createGenerateEmbedding();
 
 const { Client } = pg;
 
@@ -132,7 +136,7 @@ async function main() {
       let embedding: number[] | null = null;
 
       if (fullText.length >= 20) {
-        const ai = await generateSummaryAndTags(fullText, meta.ogTitle, r.type as any);
+        const ai = await generateSummaryAndTags(anthropic, fullText, meta.ogTitle, r.type as any);
         summary = ai.summary;
         tags = ai.tags;
         embedding = await generateEmbedding(

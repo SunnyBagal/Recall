@@ -8,17 +8,26 @@ import { cosineDistance } from "drizzle-orm";
 import { authMiddleware } from "./middleware/middleware";
 import { hybridSearch } from "./services/searchService";
 
-import { db } from "./config/db";
+import { createDb, databaseUrlOrExit, type Db } from "./config/db";
 import { users, contents, shareLinks } from "./db/schema";
 import { detectLinkType } from "./services/linkDetector";
 import { fetchMetadata } from "./services/metadataFetcher";
-import { contentQueue } from "./config/queue";
-import { generateEmbedding } from "./services/embeddings";
+import { createQueue, type ContentQueue } from "./config/queue";
+import { createGenerateEmbedding, type GenerateEmbedding } from "./services/embeddings";
+import type { AnthropicClient } from "./services/aiProcessor";
 import Anthropic from "@anthropic-ai/sdk";
 
-const anthropic = new Anthropic();
-
 const JWT_SECRET = process.env.JWT_SECRET!;
+
+export interface AppDeps {
+  db: Db;
+  queue: ContentQueue;
+  generateEmbedding: GenerateEmbedding;
+  anthropic: AnthropicClient;
+}
+
+export function createApp(deps: AppDeps) {
+const { db, queue: contentQueue, generateEmbedding, anthropic } = deps;
 const app = express();
 app.use(express.json());
 
@@ -319,7 +328,7 @@ app.get("/api/v1/search", authMiddleware, async (req, res) => {
     // shared hybrid retrieval (pgvector + ILIKE + RRF). The exact same
     // hybridSearch() is what the benchmark's retrieval-only mode calls.
     const queryEmbedding = await generateEmbedding(query);
-    const merged = await hybridSearch(userId, query, queryEmbedding);
+    const merged = await hybridSearch(db, userId, query, queryEmbedding);
 
     res.json({ results: merged, total: merged.length });
   } catch (err) {
@@ -480,8 +489,23 @@ ${contextBlock}`,
   }
 });
 
-const PORT = process.env.PORT || 3000;
+return app;
+}
 
-app.listen(PORT, () => {
-  console.log(`Server running on port: ${PORT}`);
-});
+// Entry point: only when run directly (`bun run index.ts`), not when imported
+// by tests. Same startup order as before: database check, queue, embeddings,
+// Anthropic client, then listen.
+if (import.meta.main) {
+  const db = createDb(databaseUrlOrExit());
+  const { contentQueue } = createQueue();
+  const generateEmbedding = createGenerateEmbedding();
+  const anthropic = new Anthropic();
+
+  const app = createApp({ db, queue: contentQueue, generateEmbedding, anthropic });
+
+  const PORT = process.env.PORT || 3000;
+
+  app.listen(PORT, () => {
+    console.log(`Server running on port: ${PORT}`);
+  });
+}

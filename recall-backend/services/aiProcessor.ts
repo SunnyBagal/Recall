@@ -1,13 +1,22 @@
-import Anthropic from "@anthropic-ai/sdk";
+import type Anthropic from "@anthropic-ai/sdk";
 
-const client = new Anthropic();
+// The part of the Anthropic client the backend uses. Entry points pass a real
+// `new Anthropic()`; tests pass a fake.
+export type AnthropicClient = Pick<Anthropic, "messages">;
 
 export interface AISummaryResult {
   summary: string;
   tags: string[];
 }
 
+export type GenerateSummaryAndTags = (
+  text: string,
+  title: string | null,
+  contentType: string
+) => Promise<AISummaryResult>;
+
 export async function generateSummaryAndTags(
+  client: AnthropicClient,
   text: string,
   title: string | null,
   contentType: string

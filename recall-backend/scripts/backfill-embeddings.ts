@@ -14,7 +14,9 @@
 // anything, so a dead key fails loudly instead of quietly writing nothing.
 
 import pg from "pg";
-import { generateEmbedding } from "../services/embeddings";
+import { createGenerateEmbedding } from "../services/embeddings";
+
+const generateEmbedding = createGenerateEmbedding();
 
 const { Client } = pg;
 

@@ -215,12 +215,14 @@ async function main() {
   // ---- arm E: real hybridSearch() at the application layer ------------------
   if (arms.includes("E")) {
     const { hybridSearch } = await import("../../services/searchService");
+    const { createDb } = await import("../../config/db");
+    const db = createDb(dbUrl);
     const embeds = Array.from({ length: N_QUERIES }, (_, j) => queryEmbedding(j));
     const texts = textQueries();
     const doOne = async (j: number) => {
       const t = { vectorMs: 0, keywordMs: 0, fusionMs: 0 };
       const t0 = performance.now();
-      await hybridSearch(userId, texts[j]!, embeds[j]!, t);
+      await hybridSearch(db, userId, texts[j]!, embeds[j]!, t);
       return { ms: performance.now() - t0, t };
     };
     for (let j = 0; j < N_QUERIES; j++) await doOne(j); // warm pass, discarded
@@ -244,7 +246,6 @@ async function main() {
       "--   lexical arm = FTS query (same plan as armD_*.txt)\n" +
       "--   fusion = Reciprocal Rank Fusion (k=60) in JS — no SQL, nothing to EXPLAIN\n" +
       "-- Timed at the app layer around hybridSearch(); see raw JSON `phases` for per-phase ms.\n");
-    const { db } = await import("../../config/db");
     await (db.$client as any)?.end?.();
   }
 
