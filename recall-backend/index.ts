@@ -10,6 +10,7 @@ import { hybridSearch } from "./services/searchService";
 
 import { db } from "./config/db";
 import { users, contents, shareLinks } from "./db/schema";
+import { sharedContentColumns } from "./db/sharedContent";
 import { detectLinkType } from "./services/linkDetector";
 import { fetchMetadata } from "./services/metadataFetcher";
 import { contentQueue } from "./config/queue";
@@ -295,7 +296,7 @@ app.get("/api/v1/brain/:shareLink", async (req, res) => {
   }
 
   const content = await db
-    .select()
+    .select(sharedContentColumns)
     .from(contents)
     .where(eq(contents.userId, link.userId))
     .orderBy(contents.createdAt);
