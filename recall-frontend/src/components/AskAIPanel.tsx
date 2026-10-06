@@ -235,6 +235,7 @@ export function AskAIPanel({ open, onClose, context, onClearContext }: AskAIPane
             type="text"
             value={input}
             onChange={(e) => setInput(e.target.value)}
+            maxLength={4000}
             placeholder="Ask about your saved content..."
             className="flex-1 h-10 px-4 rounded-xl border border-white/20 bg-white/5 text-white text-sm outline-none focus:border-white/40 placeholder:text-gray-500 transition"
             disabled={isStreaming}
