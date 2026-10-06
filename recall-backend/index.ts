@@ -332,8 +332,11 @@ app.post("/api/v1/chat", authMiddleware, async (req, res) => {
   try {
     const { message, history, cardId } = req.body;
 
-    if (!message) {
+    if (!message || typeof message !== "string") {
       return res.status(400).json({ message: "Message is required" });
+    }
+    if (message.length > 4000) {
+      return res.status(400).json({ message: "Message is too long" });
     }
 
     const userId = req.userId!;
@@ -415,9 +418,10 @@ app.post("/api/v1/chat", authMiddleware, async (req, res) => {
     
     const messages: { role: "user" | "assistant"; content: string }[] = [];
     if (Array.isArray(history)) {
-      for (const h of history) {
-        if (h.role === "user" || h.role === "assistant") {
-          messages.push({ role: h.role, content: h.content });
+      for (const h of history.slice(-20)) {
+        if (typeof h?.content !== "string") continue;
+        if (h.role === "user" || (h.role === "assistant" && messages.length > 0)) {
+          messages.push({ role: h.role, content: h.content.slice(0, 8000) });
         }
       }
     }
