@@ -4,7 +4,7 @@ import { useQuery } from "@tanstack/react-query";
 import { api } from "../lib/api";
 import type { Content } from "./useContent";
 
-async function searchContent(query: string): Promise<Content[]> {
+export async function searchContent(query: string): Promise<Content[]> {
   const res = await api.get("/api/v1/search", { params: { q: query } });
   return res.data.results;
 }

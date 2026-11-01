@@ -3,19 +3,31 @@
 import "dotenv/config";
 import { Worker, type Job } from "bullmq";
 import { eq } from "drizzle-orm";
-import { db } from "./config/db";
+import Anthropic from "@anthropic-ai/sdk";
+import { createDb, databaseUrlOrExit, type Db } from "./config/db";
 import { contents } from "./db/schema";
-import { redisConnection } from "./config/queue";
+import { createQueue } from "./config/queue";
 import { detectLinkType } from "./services/linkDetector";
 import { extractText } from "./services/textExtractor";
-import { generateSummaryAndTags } from "./services/aiProcessor";
-import { generateEmbedding } from "./services/embeddings";
+import { generateSummaryAndTags, type GenerateSummaryAndTags } from "./services/aiProcessor";
+import { createGenerateEmbedding, type GenerateEmbedding } from "./services/embeddings";
 
 interface ContentJobData {
   contentId: string;
 }
 
-async function processContent(job: Job<ContentJobData>) {
+export interface WorkerDeps {
+  db: Db;
+  generateSummaryAndTags: GenerateSummaryAndTags;
+  generateEmbedding: GenerateEmbedding;
+}
+
+// The parts of a BullMQ job that processContent reads, so tests can pass a
+// plain object.
+export type ContentJob = Pick<Job<ContentJobData>, "data" | "attemptsMade">;
+
+export async function processContent(job: ContentJob, deps: WorkerDeps) {
+  const { db, generateSummaryAndTags, generateEmbedding } = deps;
   const { contentId } = job.data;
 
   console.log(`[Worker] Processing content ${contentId} (attempt ${job.attemptsMade + 1})`);
@@ -72,11 +84,14 @@ async function processContent(job: Job<ContentJobData>) {
   }
 
   
-  const aiResult = await generateSummaryAndTags(
-    fullText,
-    content.title ?? content.ogTitle,
-    content.type
-  );
+  // A retry after a failed embedding already has its summary; don't pay for it twice.
+  const aiResult = content.summary
+    ? { summary: content.summary, tags: content.tags ?? [] }
+    : await generateSummaryAndTags(
+        fullText,
+        content.title ?? content.ogTitle,
+        content.type
+      );
 
   
   
@@ -90,66 +105,103 @@ async function processContent(job: Job<ContentJobData>) {
 
   const embedding = await generateEmbedding(embeddingInput);
 
-  
+  // No vector means this row is invisible to the vector arm of search, so it
+  // must not look finished. Keep the work done so far, mark it failed, and throw
+  // so BullMQ retries; a later attempt that succeeds sets it to done. If every
+  // attempt fails it stays failed, and scripts/backfill-embeddings.ts can
+  // recover it.
+  if (!embedding) {
+    await db
+      .update(contents)
+      .set({
+        extractedText: text,
+        summary: aiResult.summary,
+        tags: aiResult.tags,
+        processingStatus: "failed",
+        updatedAt: new Date(),
+      })
+      .where(eq(contents.id, contentId));
+    throw new Error(`Embedding failed for content ${contentId}`);
+  }
+
   await db
     .update(contents)
     .set({
       extractedText: text,
       summary: aiResult.summary,
       tags: aiResult.tags,
-      ...(embedding && { embedding }),
+      embedding,
       processingStatus: "done",
       updatedAt: new Date(),
     })
     .where(eq(contents.id, contentId));
 
   console.log(
-    `[Worker] ✓ Content ${contentId} processed — summary: ${aiResult.summary.slice(0, 60)}... tags: [${aiResult.tags.join(", ")}] embedding: ${embedding ? "yes" : "skipped"}`
+    `[Worker] ✓ Content ${contentId} processed — summary: ${aiResult.summary.slice(0, 60)}... tags: [${aiResult.tags.join(", ")}] embedding: yes`
   );
 }
 
-const worker = new Worker<ContentJobData>(
-  "content-processing",     
-  processContent,
-  {
-    connection: redisConnection,
-    concurrency: 3,         
+// Entry point: only when run directly (`bun run worker.ts`), not when imported
+// by tests. Same startup order as before: database check, Redis + queue,
+// Anthropic client, embeddings, then the Worker.
+if (import.meta.main) {
+  const db = createDb(databaseUrlOrExit());
+  // createQueue() also builds the content queue, which the worker never uses —
+  // config/queue.ts always did that on import, so it is kept as-is.
+  const { redisConnection } = createQueue();
+  const anthropic = new Anthropic();
+  const generateEmbedding = createGenerateEmbedding();
+
+  const deps: WorkerDeps = {
+    db,
+    generateSummaryAndTags: (text, title, contentType) =>
+      generateSummaryAndTags(anthropic, text, title, contentType),
+    generateEmbedding,
+  };
+
+  const worker = new Worker<ContentJobData>(
+    "content-processing",
+    (job) => processContent(job, deps),
+    {
+      connection: redisConnection,
+      concurrency: 3,         
     
     
     
-  }
-);
+    }
+  );
 
-worker.on("completed", (job) => {
-  console.log(`[Worker] Job ${job.id} completed`);
-});
+  worker.on("completed", (job) => {
+    console.log(`[Worker] Job ${job.id} completed`);
+  });
 
-worker.on("failed", (job, err) => {
-  console.error(`[Worker] Job ${job?.id} failed:`, err.message);
-  if (job && job.attemptsMade >= (job.opts.attempts ?? 3)) {
-    console.error(`[Worker] Job ${job.id} exhausted all retries — moving to DLQ`);
+  worker.on("failed", (job, err) => {
+    console.error(`[Worker] Job ${job?.id} failed:`, err.message);
+    if (job && job.attemptsMade >= (job.opts.attempts ?? 3)) {
+      console.error(`[Worker] Job ${job.id} exhausted all retries — moving to DLQ`);
     
-    db.update(contents)
-      .set({ processingStatus: "failed" })
-      .where(eq(contents.id, job.data.contentId))
-      .catch(console.error);
-  }
-});
+      db.update(contents)
+        .set({ processingStatus: "failed" })
+        .where(eq(contents.id, job.data.contentId))
+        .catch(console.error);
+    }
+  });
 
-worker.on("error", (err) => {
-  console.error("[Worker] Worker error:", err);
-});
+  worker.on("error", (err) => {
+    console.error("[Worker] Worker error:", err);
+  });
 
-console.log("[Worker] Content processing worker started — waiting for jobs...");
-console.log("[Worker] Press Ctrl+C to stop");
+  console.log("[Worker] Content processing worker started — waiting for jobs...");
+  console.log("[Worker] Press Ctrl+C to stop");
 
-process.on("SIGINT", async () => {
-  console.log("\n[Worker] Shutting down gracefully...");
-  await worker.close();
-  process.exit(0);
-});
+  process.on("SIGINT", async () => {
+    console.log("\n[Worker] Shutting down gracefully...");
+    await worker.close();
+    process.exit(0);
+  });
 
-process.on("SIGTERM", async () => {
-  await worker.close();
-  process.exit(0);
-});
+  process.on("SIGTERM", async () => {
+    await worker.close();
+    process.exit(0);
+  });
+}

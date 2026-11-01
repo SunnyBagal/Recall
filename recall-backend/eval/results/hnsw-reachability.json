@@ -1,0 +1,7 @@
+{
+  "indexedRows": 5183,
+  "walks": 25,
+  "reachableAcrossAllWalks": 5183,
+  "minReachedInOneWalk": 5127,
+  "maxReachedInOneWalk": 5179
+}

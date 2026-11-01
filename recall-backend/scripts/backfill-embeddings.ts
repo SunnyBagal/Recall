@@ -1,9 +1,9 @@
 // Backfill embeddings for rows that have none.
 //
-// Rows saved while OPENAI_API_KEY was unset or the account was out of credit
-// were marked processing_status='done' with embedding = NULL, which silently
-// disables the vector half of hybrid search for them. This re-embeds those
-// rows in place. It does NOT re-fetch or re-summarize — use
+// Older rows saved while OPENAI_API_KEY was unset or the account was out of
+// credit were marked processing_status='done' with embedding = NULL. Newer ones
+// end up 'failed' once the worker's retries run out. Either way the vector half
+// of hybrid search can't see them. This re-embeds those rows in place. It does NOT re-fetch or re-summarize — use
 // scripts/repair-blocked-metadata.ts for that.
 //
 //   bun run scripts/backfill-embeddings.ts                       # dry run, local
@@ -14,7 +14,9 @@
 // anything, so a dead key fails loudly instead of quietly writing nothing.
 
 import pg from "pg";
-import { generateEmbedding } from "../services/embeddings";
+import { createGenerateEmbedding } from "../services/embeddings";
+
+const generateEmbedding = createGenerateEmbedding();
 
 const { Client } = pg;
 
@@ -114,7 +116,16 @@ async function main() {
         continue;
       }
       await c.query(
-        `update contents set embedding = $2::vector, updated_at = now() where id = $1`,
+        // A row that failed only on its embedding is now complete. A failed row
+        // with no summary failed earlier in the pipeline, so it stays failed.
+        `update contents
+            set embedding = $2::vector,
+                updated_at = now(),
+                processing_status = case
+                  when processing_status = 'failed' and summary is not null then 'done'::processing_status
+                  else processing_status
+                end
+          where id = $1`,
         [r.id, `[${embedding.join(",")}]`],
       );
       console.log(`  + ${(r.og_title ?? r.link).slice(0, 58)}`);

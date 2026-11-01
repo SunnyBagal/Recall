@@ -38,3 +38,8 @@ bench/query-embeddings.json
 
 # local database backups (never commit)
 backups/
+
+# eval: local services, downloaded dataset, generated caches
+eval/.services/
+eval/data/
+eval/cache/

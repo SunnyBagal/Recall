@@ -20,9 +20,9 @@ import { performance } from "node:perf_hooks";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { sql } from "drizzle-orm";
-import { db } from "../config/db";
+import { createDb, databaseUrlOrExit } from "../config/db";
 import { hybridSearch, type HybridSearchTimings } from "../services/searchService";
-import { generateEmbedding } from "../services/embeddings";
+import { createGenerateEmbedding } from "../services/embeddings";
 import {
   BENCH_USER,
   DEFAULT_API_URL,
@@ -34,6 +34,11 @@ import {
   seededUnitVector,
   vectorLiteral,
 } from "./shared";
+
+// Was created on import of ../config/db and ../services/embeddings; now built
+// here, at the same point in startup.
+const db = createDb(databaseUrlOrExit());
+const generateEmbedding = createGenerateEmbedding();
 
 interface Sample {
   ms: number;
@@ -306,7 +311,7 @@ async function main() {
         const t: HybridSearchTimings = { vectorMs: 0, keywordMs: 0, fusionMs: 0 };
         const t0 = performance.now();
         try {
-          await hybridSearch(userId, q, embeddings[q] ?? null, t);
+          await hybridSearch(db, userId, q, embeddings[q] ?? null, t);
           const ms = performance.now() - t0;
           arm.vector.push(t.vectorMs);
           arm.keyword.push(t.keywordMs);

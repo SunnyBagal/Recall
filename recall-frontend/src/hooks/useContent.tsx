@@ -37,7 +37,7 @@ export type Content = {
   username: string;
 };
 
-async function fetchContent(): Promise<Content[]> {
+export async function fetchContent(): Promise<Content[]> {
   const res = await api.get("/api/v1/content");
   return res.data.content;
 }
@@ -72,19 +72,25 @@ export function useContent() {
   };
 }
 
-interface CreateContentInput {
+export interface CreateContentInput {
   link: string;
   title?: string;
+}
+
+export async function createContent(input: CreateContentInput) {
+  const res = await api.post("/api/v1/content", input);
+  return res.data;
+}
+
+export async function deleteContent(contentId: string) {
+  await api.delete("/api/v1/content", { data: { contentId } });
 }
 
 export function useCreateContent() {
   const queryClient = useQueryClient();
 
   return useMutation({
-    mutationFn: async (input: CreateContentInput) => {
-      const res = await api.post("/api/v1/content", input);
-      return res.data;
-    },
+    mutationFn: createContent,
 
     
     
@@ -100,9 +106,7 @@ export function useDeleteContent() {
   const queryClient = useQueryClient();
 
   return useMutation({
-    mutationFn: async (contentId: string) => {
-      await api.delete("/api/v1/content", { data: { contentId } });
-    },
+    mutationFn: deleteContent,
 
     
     
