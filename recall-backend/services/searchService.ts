@@ -125,8 +125,11 @@ export async function hybridSearch(
     //
     // SET LOCAL enable_seqscan = off: at this table size pgvector under-costs
     // the HNSW index (estimated startup cost > a seq-scan+top-N), so the
-    // planner cost-chooses a Seq Scan even though the index scan is ~10-20x
-    // faster here (measured warm: ~2-6ms index vs ~44ms seq scan on 10k rows).
+    // planner cost-chooses a Seq Scan even though the index scan is ~16.8x
+    // faster for a user who owns the whole table (SciFact, 5,183 real embeddings,
+    // 300 queries x 3 warm passes, p50: 2.65ms index vs 44.60ms seq scan). The gain
+    // shrinks with the user's share of the table: see eval/RESULTS.md. The earlier
+    // 64x in docs/explain/ was one query on 10k rows owned by one user.
     // Removing the threshold alone does NOT flip the plan (confirmed by
     // EXPLAIN); disabling seqscan for this one transaction does. It's scoped to
     // this transaction via SET LOCAL, so nothing leaks to other queries.

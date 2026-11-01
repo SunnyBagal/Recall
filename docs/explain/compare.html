@@ -1,0 +1,122 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>pgvector HNSW vs seq scan</title>
+<style>
+  :root {
+    --bg: #0b0d10;
+    --text: #e6e8eb;
+    --muted: #8a929c;
+    --cyan: #5ee0f7;
+    --orange: #e08a5e;
+    --line: #1e232a;
+    --sans: -apple-system, "SF Pro Display", Inter, sans-serif;
+    --mono: "SF Mono", Menlo, monospace;
+  }
+  * { box-sizing: border-box; margin: 0; }
+  html, body { width: 1600px; height: 900px; overflow: hidden; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--sans);
+    padding: 52px 72px 40px;
+    display: flex;
+    flex-direction: column;
+    gap: 34px;
+  }
+  .eyebrow { font-size: 17px; color: var(--muted); letter-spacing: 0.02em; }
+
+  .cards { display: grid; grid-template-columns: 1fr 1fr; gap: 28px; }
+  .card {
+    border: 1px solid var(--line);
+    border-radius: 16px;
+    padding: 28px 36px 26px;
+  }
+  .card .label { font-size: 19px; color: var(--muted); font-weight: 500; }
+  .card .value {
+    font-size: 84px; font-weight: 700; letter-spacing: -0.03em;
+    line-height: 1.05; margin-top: 8px; font-variant-numeric: tabular-nums;
+  }
+  .card .value small { font-size: 38px; font-weight: 500; margin-left: 6px; letter-spacing: 0; }
+  .card .range { font-size: 16px; color: var(--muted); margin-top: 10px; font-variant-numeric: tabular-nums; }
+  .slow .value { color: var(--orange); }
+  .fast .value { color: var(--cyan); }
+
+  .bars { display: flex; flex-direction: column; gap: 14px; }
+  .bars h2 { font-size: 26px; font-weight: 600; margin-bottom: 6px; }
+  .bars h2 span { color: var(--cyan); }
+  .bars h2 em { font-style: normal; color: var(--muted); font-weight: 400; font-size: 18px; margin-left: 8px; }
+  .row { display: grid; grid-template-columns: 130px 1fr 110px; align-items: center; gap: 18px; }
+  .row .name { font-size: 16px; color: var(--muted); }
+  .row .track { height: 22px; }
+  .row .bar { height: 100%; border-radius: 4px; }
+  .row .num { font-size: 16px; font-variant-numeric: tabular-nums; }
+  .slow-bar { background: var(--orange); width: 100%; }
+  /* linear scale: 1.177 / 75.105 = 1.567% of the seq-scan bar */
+  .fast-bar { background: var(--cyan); width: 1.567%; }
+
+  .buffers { font-size: 19px; color: var(--muted); display: flex; gap: 14px; align-items: baseline; }
+  .buffers b { color: var(--text); font-weight: 600; font-variant-numeric: tabular-nums; }
+  .buffers .o { color: var(--orange); }
+  .buffers .c { color: var(--cyan); }
+  .buffers .note { font-size: 15px; }
+
+  .plans { display: grid; grid-template-columns: 1fr 1fr; gap: 28px; }
+  .plan { border: 1px solid var(--line); border-radius: 12px; padding: 18px 24px; }
+  .plan pre { font-family: var(--mono); font-size: 15px; line-height: 1.65; color: var(--muted); white-space: pre; overflow: hidden; }
+  .plan pre b { font-weight: 600; }
+  .slow pre b { color: var(--orange); }
+  .fast pre b { color: var(--cyan); }
+
+  footer { margin-top: auto; font-size: 14px; color: var(--muted); }
+</style>
+</head>
+<body>
+  <div class="eyebrow">Recall · pgvector HNSW vs sequential scan · 10,000 rows</div>
+
+  <section class="cards">
+    <div class="card slow">
+      <div class="label">Seq scan</div>
+      <div class="value">75.1<small>ms</small></div>
+      <div class="range">min 73.1 ms – max 134.2 ms</div>
+    </div>
+    <div class="card fast">
+      <div class="label">HNSW index</div>
+      <div class="value">1.18<small>ms</small></div>
+      <div class="range">min 1.00 ms – max 1.75 ms</div>
+    </div>
+  </section>
+
+  <section class="bars">
+    <h2><span>63.8×</span> faster <em>(median of 5)</em></h2>
+    <div class="row">
+      <div class="name">Seq scan</div>
+      <div class="track"><div class="bar slow-bar"></div></div>
+      <div class="num">75.1 ms</div>
+    </div>
+    <div class="row">
+      <div class="name">HNSW index</div>
+      <div class="track"><div class="bar fast-bar"></div></div>
+      <div class="num">1.18 ms</div>
+    </div>
+  </section>
+
+  <div class="buffers">
+    Buffers read:
+    <b class="o">74,253</b> vs <b class="c">1,341</b>
+    <span class="note">(shared-buffer hits, none from disk)</span>
+  </div>
+
+  <section class="plans">
+    <div class="plan slow"><pre>Limit (rows=10)
+  -&gt; <b>Sort</b>  Sort Method: <b>top-N heapsort</b>
+       -&gt; <b>Seq Scan on contents c</b>  (actual rows=10000)</pre></div>
+    <div class="plan fast"><pre>Limit (rows=10)
+  -&gt; <b>Index Scan using idx_contents_embedding_hnsw</b>
+       Order By: (embedding &lt;=&gt; $vec)  (actual rows=10)</pre></div>
+  </section>
+
+  <footer>EXPLAIN (ANALYZE, BUFFERS) · warm cache · 1 untimed warm-up · median of 5 · full plans in docs/explain/</footer>
+</body>
+</html>
