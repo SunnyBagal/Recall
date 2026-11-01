@@ -187,18 +187,26 @@ export async function hybridSearch(
   // search_vector is GENERATED ALWAYS from title/og_title/summary/
   // og_description (weighted A/B/C/D — see db/schema.ts) and GIN-indexed.
   //
-  // The tsquery fragment below appears three times in the SQL text, but
-  // websearch_to_tsquery with an EXPLICIT config is IMMUTABLE, so the planner
-  // folds it to a single '...'::tsquery constant at plan time — verified in
-  // the bench's captured EXPLAIN, which shows the folded constant, not three
-  // function calls.
+  // Terms are ORed, ranked by ts_rank. websearch_to_tsquery ANDs them, so one
+  // unmatched word returned nothing: 285 of 300 SciFact test queries came back
+  // empty. Plain OR scored level with "AND, then OR" on the train split and is
+  // one query instead of two (eval/fts-variants.ts).
+  //
+  // Only the implicit ANDs between terms change: "quoted phrases" and an explicit
+  // `or` keep their meaning. A query with a -negation keeps AND, since
+  // `a | !b` would match nearly every row.
+  //
+  // The expression appears several times in the SQL text, but it is built from
+  // immutable functions, so the planner folds it to one '...'::tsquery constant
+  // (confirmed with EXPLAIN).
   //
   // Empty/stopword-only queries: websearch_to_tsquery returns an EMPTY tsquery
   // (numnode = 0), and `@@ empty` matches nothing. The numnode guard preserves
   // the old ILIKE behavior for that case ('%%' matched everything): return up
   // to LIMIT arbitrary rows. ts_rank against an empty query is 0 for every
   // row, so the ordering is as arbitrary as the ILIKE path's missing ORDER BY.
-  const tsq = sql`websearch_to_tsquery('english', ${query})`;
+  const parsed = sql`websearch_to_tsquery('english', ${query})`;
+  const tsq = sql`(case when strpos(${parsed}::text, '!') > 0 then ${parsed} else replace(${parsed}::text, ' & ', ' | ')::tsquery end)`;
   const tk = timings ? performance.now() : 0;
   const keywordResults: Array<Record<string, any>> = mode === "vector" ? [] : await db
     .select(baseFields)

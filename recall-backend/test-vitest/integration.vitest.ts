@@ -95,9 +95,39 @@ describe("FTS arm", () => {
     expect(titles(rows)).toEqual(["Graphene conductivity"]);
   });
 
-  it("KNOWN LIMITATION: every term is ANDed, one unmatched word returns nothing", async () => {
+  it("regression: one unmatched term no longer empties the results", async () => {
     const rows = await hybridSearch(db, ada, "graphene conductivity measurements", null, undefined, "fts");
+    expect(titles(rows)).toContain("Graphene conductivity");
+  });
+
+  it("a document matching more of the query terms ranks higher", async () => {
+    const rows = await hybridSearch(db, ada, "graphene conductivity", null, undefined, "fts");
+    expect(titles(rows)[0]).toBe("Graphene conductivity");
+    expect(titles(rows)).toContain("Polymer science");
+  });
+
+  it("a query with no matching term still returns nothing", async () => {
+    expect(await hybridSearch(db, ada, "zzznomatch qqqnomatch", null, undefined, "fts")).toEqual([]);
+  });
+
+  it("a quoted phrase stays a phrase", async () => {
+    const rows = await hybridSearch(db, ada, '"conductivity graphene"', null, undefined, "fts");
     expect(rows).toEqual([]);
+    const inOrder = await hybridSearch(db, ada, '"graphene conductivity"', null, undefined, "fts");
+    expect(titles(inOrder)).toEqual(["Graphene conductivity"]);
+  });
+
+  it("a -negation still excludes, and does not match every other row", async () => {
+    const rows = await hybridSearch(db, ada, "graphene -conductivity", null, undefined, "fts");
+    expect(titles(rows)).toContain("Polymer science");
+    expect(titles(rows)).not.toContain("Graphene conductivity");
+    expect(titles(rows)).not.toContain("Unrelated cooking");
+  });
+
+  it("hyphenated words are not treated as negation", async () => {
+    await db.insert(contents).values({ userId: grace, link: "https://hy", title: "Long-term outcomes" });
+    const rows = await hybridSearch(db, grace, "long-term zzznomatch", null, undefined, "fts");
+    expect(titles(rows)).toContain("Long-term outcomes");
   });
 
   it("KNOWN LIMITATION: extracted_text is not searched", async () => {
