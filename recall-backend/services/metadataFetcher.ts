@@ -1,6 +1,7 @@
 import { parseHTML } from "linkedom";
 import type { DetectedType } from "./linkDetector";
 import { Readability } from "@mozilla/readability";
+import { isPublicHttpUrl } from "./urlGuard";
 
 // linkedom's document type. The project's tsconfig has no DOM lib, so the
 // global `Document` type isn't available here.
@@ -163,11 +164,26 @@ export async function fetchMetadata(
       const controller = new AbortController();
       const timeout = setTimeout(() => controller.abort(), 8000);
       try {
-        const response = await fetch(url, {
-          signal: controller.signal,
-          headers: profile.headers,
-          redirect: "follow",
-        });
+        // Redirects are followed by hand so every hop goes through the same
+        // address check as the original URL.
+        let target = url;
+        let response: Response | null = null;
+        for (let hop = 0; hop <= 5; hop++) {
+          if (!(await isPublicHttpUrl(target))) break;
+          const res = await fetch(target, {
+            signal: controller.signal,
+            headers: profile.headers,
+            redirect: "manual",
+          });
+          const location = res.headers.get("location");
+          if (res.status >= 300 && res.status < 400 && location) {
+            target = new URL(location, target).href;
+            continue;
+          }
+          response = res;
+          break;
+        }
+        if (!response) return unavailable;
 
         // Without this the fetcher happily parses 403/404/503 error pages and
         // stores their <title> as the article's — the bug that made blocked

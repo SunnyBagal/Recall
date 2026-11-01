@@ -9,6 +9,7 @@ import { hybridSearch, nearestContents } from "./services/searchService";
 
 import { createDb, databaseUrlOrExit, type Db } from "./config/db";
 import { users, contents, shareLinks } from "./db/schema";
+import { sharedContentColumns } from "./db/sharedContent";
 import { detectLinkType } from "./services/linkDetector";
 import { fetchMetadata } from "./services/metadataFetcher";
 import { createQueue, type ContentQueue } from "./config/queue";
@@ -303,25 +304,10 @@ export function createApp(deps: AppDeps) {
     }
 
     // Explicit allowlist: this route needs no login, so a new column stays
-    // private until someone adds it here. Exactly what the share page renders
-    // (recall-frontend/src/pages/shared.tsx); never userId, extractedText,
-    // embedding or searchVector.
+    // private until someone adds it to sharedContentColumns. Never userId,
+    // extractedText, embedding or searchVector.
     const content = await db
-      .select({
-        id: contents.id,
-        title: contents.title,
-        link: contents.link,
-        type: contents.type,
-        tags: contents.tags,
-        ogTitle: contents.ogTitle,
-        ogDescription: contents.ogDescription,
-        ogImage: contents.ogImage,
-        ogSiteName: contents.ogSiteName,
-        favicon: contents.favicon,
-        embedUrl: contents.embedUrl,
-        summary: contents.summary,
-        processingStatus: contents.processingStatus,
-      })
+      .select(sharedContentColumns)
       .from(contents)
       .where(eq(contents.userId, link.userId))
       .orderBy(contents.createdAt);
@@ -358,8 +344,11 @@ export function createApp(deps: AppDeps) {
     try {
       const { message, history, cardId } = req.body;
 
-      if (!message) {
+      if (!message || typeof message !== "string") {
         return res.status(400).json({ message: "Message is required" });
+      }
+      if (message.length > 4000) {
+        return res.status(400).json({ message: "Message is too long" });
       }
 
       const userId = req.userId!;
@@ -438,9 +427,10 @@ export function createApp(deps: AppDeps) {
     
       const messages: { role: "user" | "assistant"; content: string }[] = [];
       if (Array.isArray(history)) {
-        for (const h of history) {
-          if (h.role === "user" || h.role === "assistant") {
-            messages.push({ role: h.role, content: h.content });
+        for (const h of history.slice(-20)) {
+          if (typeof h?.content !== "string") continue;
+          if (h.role === "user" || (h.role === "assistant" && messages.length > 0)) {
+            messages.push({ role: h.role, content: h.content.slice(0, 8000) });
           }
         }
       }

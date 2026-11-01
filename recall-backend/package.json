@@ -5,7 +5,7 @@
   "private": true,
   "scripts": {
     "test": "bun run test:bun && bun run test:vitest",
-    "test:bun": "bun test ./test",
+    "test:bun": "bun test",
     "test:vitest": "vitest run"
   },
   "devDependencies": {

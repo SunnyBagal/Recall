@@ -42,13 +42,14 @@ describe("fetchMetadata", () => {
     });
     expect(result.extractedText).toContain("Rust is fast because it compiles to native code");
 
-    // one request, with the bot user agent, following redirects
+    // one request, with the bot user agent; redirects are followed by hand so each
+    // hop goes through urlGuard
     expect(calls).toHaveLength(1);
     expect(calls[0]!.url).toBe(URL_);
     expect(userAgent(calls[0]!.init)).toBe(
       "Mozilla/5.0 (compatible; RecallBot/1.0; +https://recall.app)",
     );
-    expect(calls[0]!.init!.redirect).toBe("follow");
+    expect(calls[0]!.init!.redirect).toBe("manual");
   });
 
   test("text is only extracted for article and link types", async () => {
