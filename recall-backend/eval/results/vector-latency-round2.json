@@ -1,0 +1,453 @@
+{
+  "label": "round2",
+  "generatedAt": "2026-11-01T14:49:36.692Z",
+  "gitCommit": "124a8c9bb524308218402d0dcd87ea848f1175d6",
+  "corpusRows": 5183,
+  "rowsByTenantInClone": {
+    "t300": 300,
+    "medium": 1041,
+    "t450": 450,
+    "t150": 150,
+    "micro": 8,
+    "tiny": 68,
+    "scifact-eval": 2566,
+    "t600": 600
+  },
+  "queries": 300,
+  "passes": 3,
+  "exactScanMaxRows": 450,
+  "tenants": {
+    "whole": {
+      "queriesWithAnyTruth": 300,
+      "exact": {
+        "p50": 41.574290999997174,
+        "p95": 44.998625000000175,
+        "correctShareOfExactTop10": 1,
+        "queriesWithExactSameList": 300,
+        "meanRowsReturned": 9.923333333333334,
+        "samples": 900
+      },
+      "exact-btree": {
+        "p50": 41.54979100001219,
+        "p95": 44.89258400000108,
+        "correctShareOfExactTop10": 1,
+        "queriesWithExactSameList": 300,
+        "meanRowsReturned": 9.923333333333334,
+        "samples": 900
+      },
+      "hnsw-iterative": {
+        "p50": 2.1317500000004657,
+        "p95": 2.6095409999979893,
+        "correctShareOfExactTop10": 0.9943333333333332,
+        "queriesWithExactSameList": 285,
+        "meanRowsReturned": 9.923333333333334,
+        "samples": 900
+      },
+      "production": {
+        "p50": 2.7443749999947613,
+        "p95": 3.2627919999940787,
+        "correctShareOfExactTop10": 0.9943333333333332,
+        "queriesWithExactSameList": 285,
+        "meanRowsReturned": 9.923333333333334,
+        "samples": 900
+      },
+      "iterative-no-override": {
+        "p50": 41.52783399997861,
+        "p95": 44.849500000011176,
+        "correctShareOfExactTop10": 1,
+        "queriesWithExactSameList": 300,
+        "meanRowsReturned": 9.923333333333334,
+        "samples": 900
+      },
+      "routingCount": {
+        "p50": 0.07737499999348074,
+        "p95": 0.14495799998985603,
+        "samples": 900
+      },
+      "routingCountPlan": "->  Index Only Scan using idx_contents_user_id on contents  ",
+      "planDefault": "->  Seq Scan on users u   | ->  Seq Scan on contents c  ",
+      "planSeqscanOffOnly": "->  Index Scan using users_pkey on users u   | ->  Index Scan using idx_contents_user_id on contents c  ",
+      "planHnsw": "->  Index Scan using idx_contents_embedding_hnsw on contents c   | ->  Index Scan using users_pkey on users u  ",
+      "planIterativeNoOverride": "->  Seq Scan on users u   | ->  Seq Scan on contents c  ",
+      "planExactBtree": "->  Seq Scan on users u   | ->  Seq Scan on contents c  "
+    },
+    "medium": {
+      "queriesWithAnyTruth": 299,
+      "exact": {
+        "p50": 9.06387499999255,
+        "p95": 11.345624999987194,
+        "correctShareOfExactTop10": 1,
+        "queriesWithExactSameList": 300,
+        "meanRowsReturned": 9.636666666666667,
+        "samples": 900
+      },
+      "exact-btree": {
+        "p50": 8.636083999997936,
+        "p95": 9.978082999994513,
+        "correctShareOfExactTop10": 1,
+        "queriesWithExactSameList": 300,
+        "meanRowsReturned": 9.636666666666667,
+        "samples": 900
+      },
+      "hnsw-iterative": {
+        "p50": 2.8989999999757856,
+        "p95": 3.7350830000068527,
+        "correctShareOfExactTop10": 0.9842066146413975,
+        "queriesWithExactSameList": 236,
+        "meanRowsReturned": 9.623333333333333,
+        "samples": 900
+      },
+      "production": {
+        "p50": 3.5528340000018943,
+        "p95": 4.5836249999993015,
+        "correctShareOfExactTop10": 0.9842066146413975,
+        "queriesWithExactSameList": 259,
+        "meanRowsReturned": 9.623333333333333,
+        "samples": 900
+      },
+      "iterative-no-override": {
+        "p50": 8.627375000010943,
+        "p95": 9.012291000020923,
+        "correctShareOfExactTop10": 1,
+        "queriesWithExactSameList": 300,
+        "meanRowsReturned": 9.636666666666667,
+        "samples": 900
+      },
+      "routingCount": {
+        "p50": 0.07679200000711717,
+        "p95": 0.13612499998998828,
+        "samples": 900
+      },
+      "routingCountPlan": "->  Index Only Scan using idx_contents_user_id on contents  ",
+      "planDefault": "->  Index Scan using users_pkey on users u   | ->  Bitmap Heap Scan on contents c   | ->  Bitmap Index Scan on idx_contents_user_id  ",
+      "planSeqscanOffOnly": "->  Index Scan using users_pkey on users u   | ->  Bitmap Heap Scan on contents c   | ->  Bitmap Index Scan on idx_contents_user_id  ",
+      "planHnsw": "->  Index Scan using idx_contents_embedding_hnsw on contents c   | ->  Index Scan using users_pkey on users u  ",
+      "planIterativeNoOverride": "->  Index Scan using users_pkey on users u   | ->  Bitmap Heap Scan on contents c   | ->  Bitmap Index Scan on idx_contents_user_id  ",
+      "planExactBtree": "->  Seq Scan on users u   | ->  Bitmap Heap Scan on contents c   | ->  Bitmap Index Scan on idx_contents_user_id  "
+    },
+    "tiny": {
+      "queriesWithAnyTruth": 278,
+      "exact": {
+        "p50": 1.4946249999920838,
+        "p95": 1.5845829999889247,
+        "correctShareOfExactTop10": 1,
+        "queriesWithExactSameList": 300,
+        "meanRowsReturned": 6.38,
+        "samples": 900
+      },
+      "exact-btree": {
+        "p50": 0.9819159999897238,
+        "p95": 1.026333000016166,
+        "correctShareOfExactTop10": 1,
+        "queriesWithExactSameList": 300,
+        "meanRowsReturned": 6.38,
+        "samples": 900
+      },
+      "hnsw-iterative": {
+        "p50": 10.243167000007816,
+        "p95": 12.953125,
+        "correctShareOfExactTop10": 0.9996402877697841,
+        "queriesWithExactSameList": 290,
+        "meanRowsReturned": 6.38,
+        "samples": 900
+      },
+      "production": {
+        "p50": 1.5835409999999683,
+        "p95": 1.8903749999881256,
+        "correctShareOfExactTop10": 1,
+        "queriesWithExactSameList": 300,
+        "meanRowsReturned": 6.38,
+        "samples": 900
+      },
+      "iterative-no-override": {
+        "p50": 0.983208999998169,
+        "p95": 1.0537079999921843,
+        "correctShareOfExactTop10": 1,
+        "queriesWithExactSameList": 300,
+        "meanRowsReturned": 6.38,
+        "samples": 900
+      },
+      "routingCount": {
+        "p50": 0.06304199999431148,
+        "p95": 0.11487499999930151,
+        "samples": 900
+      },
+      "routingCountPlan": "->  Index Only Scan using idx_contents_user_id on contents  ",
+      "planDefault": "->  Index Scan using users_pkey on users u   | ->  Bitmap Heap Scan on contents c   | ->  Bitmap Index Scan on idx_contents_user_id  ",
+      "planSeqscanOffOnly": "->  Index Scan using users_pkey on users u   | ->  Bitmap Heap Scan on contents c   | ->  Bitmap Index Scan on idx_contents_user_id  ",
+      "planHnsw": "->  Index Scan using idx_contents_embedding_hnsw on contents c   | ->  Index Scan using users_pkey on users u  ",
+      "planIterativeNoOverride": "->  Index Scan using users_pkey on users u   | ->  Bitmap Heap Scan on contents c   | ->  Bitmap Index Scan on idx_contents_user_id  ",
+      "planExactBtree": "->  Bitmap Heap Scan on users u   | ->  Bitmap Index Scan on users_pkey   | ->  Bitmap Heap Scan on contents c   | ->  Bitmap Index Scan on idx_contents_user_id  "
+    },
+    "micro": {
+      "queriesWithAnyTruth": 123,
+      "exact": {
+        "p50": 1.0005419999943115,
+        "p95": 1.156375000020489,
+        "correctShareOfExactTop10": 1,
+        "queriesWithExactSameList": 300,
+        "meanRowsReturned": 0.5233333333333333,
+        "samples": 900
+      },
+      "exact-btree": {
+        "p50": 0.38858299999265,
+        "p95": 0.41695899999467656,
+        "correctShareOfExactTop10": 1,
+        "queriesWithExactSameList": 300,
+        "meanRowsReturned": 0.5233333333333333,
+        "samples": 900
+      },
+      "hnsw-iterative": {
+        "p50": 20.15412500000093,
+        "p95": 23.646959000005154,
+        "correctShareOfExactTop10": 1,
+        "queriesWithExactSameList": 300,
+        "meanRowsReturned": 0.5233333333333333,
+        "samples": 900
+      },
+      "production": {
+        "p50": 1.1069589999970049,
+        "p95": 1.3897500000311993,
+        "correctShareOfExactTop10": 1,
+        "queriesWithExactSameList": 300,
+        "meanRowsReturned": 0.5233333333333333,
+        "samples": 900
+      },
+      "iterative-no-override": {
+        "p50": 0.3850830000010319,
+        "p95": 0.41141599998809397,
+        "correctShareOfExactTop10": 1,
+        "queriesWithExactSameList": 300,
+        "meanRowsReturned": 0.5233333333333333,
+        "samples": 900
+      },
+      "routingCount": {
+        "p50": 0.05904199997894466,
+        "p95": 0.06791700003668666,
+        "samples": 900
+      },
+      "routingCountPlan": "->  Index Only Scan using idx_contents_user_id on contents  ",
+      "planDefault": "->  Index Scan using users_pkey on users u   | ->  Bitmap Heap Scan on contents c   | ->  Bitmap Index Scan on idx_contents_user_id  ",
+      "planSeqscanOffOnly": "->  Index Scan using users_pkey on users u   | ->  Bitmap Heap Scan on contents c   | ->  Bitmap Index Scan on idx_contents_user_id  ",
+      "planHnsw": "->  Index Scan using idx_contents_embedding_hnsw on contents c   | ->  Index Scan using users_pkey on users u  ",
+      "planIterativeNoOverride": "->  Index Scan using users_pkey on users u   | ->  Bitmap Heap Scan on contents c   | ->  Bitmap Index Scan on idx_contents_user_id  ",
+      "planExactBtree": "->  Bitmap Heap Scan on users u   | ->  Bitmap Index Scan on users_pkey   | ->  Bitmap Heap Scan on contents c   | ->  Bitmap Index Scan on idx_contents_user_id  "
+    },
+    "t150": {
+      "queriesWithAnyTruth": 279,
+      "exact": {
+        "p50": 2.216000000014901,
+        "p95": 2.5362500000046566,
+        "correctShareOfExactTop10": 1,
+        "queriesWithExactSameList": 300,
+        "meanRowsReturned": 8.046666666666667,
+        "samples": 900
+      },
+      "exact-btree": {
+        "p50": 1.6064580000238493,
+        "p95": 1.755457999999635,
+        "correctShareOfExactTop10": 1,
+        "queriesWithExactSameList": 300,
+        "meanRowsReturned": 8.046666666666667,
+        "samples": 900
+      },
+      "hnsw-iterative": {
+        "p50": 6.896375000011176,
+        "p95": 8.874791999987792,
+        "correctShareOfExactTop10": 0.99626216077829,
+        "queriesWithExactSameList": 256,
+        "meanRowsReturned": 8.043333333333333,
+        "samples": 900
+      },
+      "production": {
+        "p50": 2.1976250000298023,
+        "p95": 2.4038329999893904,
+        "correctShareOfExactTop10": 1,
+        "queriesWithExactSameList": 300,
+        "meanRowsReturned": 8.046666666666667,
+        "samples": 900
+      },
+      "iterative-no-override": {
+        "p50": 1.6393750000279397,
+        "p95": 1.8110829999786802,
+        "correctShareOfExactTop10": 1,
+        "queriesWithExactSameList": 300,
+        "meanRowsReturned": 8.046666666666667,
+        "samples": 900
+      },
+      "routingCount": {
+        "p50": 0.06637500005308539,
+        "p95": 0.11341699998592958,
+        "samples": 900
+      },
+      "routingCountPlan": "->  Index Only Scan using idx_contents_user_id on contents  ",
+      "planDefault": "->  Index Scan using users_pkey on users u   | ->  Bitmap Heap Scan on contents c   | ->  Bitmap Index Scan on idx_contents_user_id  ",
+      "planSeqscanOffOnly": "->  Index Scan using users_pkey on users u   | ->  Bitmap Heap Scan on contents c   | ->  Bitmap Index Scan on idx_contents_user_id  ",
+      "planHnsw": "->  Index Scan using idx_contents_embedding_hnsw on contents c   | ->  Index Scan using users_pkey on users u  ",
+      "planIterativeNoOverride": "->  Index Scan using users_pkey on users u   | ->  Bitmap Heap Scan on contents c   | ->  Bitmap Index Scan on idx_contents_user_id  ",
+      "planExactBtree": "->  Bitmap Heap Scan on users u   | ->  Bitmap Index Scan on users_pkey   | ->  Bitmap Heap Scan on contents c   | ->  Bitmap Index Scan on idx_contents_user_id  "
+    },
+    "t300": {
+      "queriesWithAnyTruth": 296,
+      "exact": {
+        "p50": 3.4178339999634773,
+        "p95": 4.35445800004527,
+        "correctShareOfExactTop10": 1,
+        "queriesWithExactSameList": 300,
+        "meanRowsReturned": 8.94,
+        "samples": 900
+      },
+      "exact-btree": {
+        "p50": 2.890209000033792,
+        "p95": 3.1141249999636784,
+        "correctShareOfExactTop10": 1,
+        "queriesWithExactSameList": 300,
+        "meanRowsReturned": 8.94,
+        "samples": 900
+      },
+      "hnsw-iterative": {
+        "p50": 4.841499999980442,
+        "p95": 6.308167000010144,
+        "correctShareOfExactTop10": 0.9922297297297301,
+        "queriesWithExactSameList": 251,
+        "meanRowsReturned": 8.936666666666667,
+        "samples": 900
+      },
+      "production": {
+        "p50": 3.405417000001762,
+        "p95": 4.0036659999750555,
+        "correctShareOfExactTop10": 1,
+        "queriesWithExactSameList": 300,
+        "meanRowsReturned": 8.94,
+        "samples": 900
+      },
+      "iterative-no-override": {
+        "p50": 2.892416000016965,
+        "p95": 3.021915999997873,
+        "correctShareOfExactTop10": 1,
+        "queriesWithExactSameList": 300,
+        "meanRowsReturned": 8.94,
+        "samples": 900
+      },
+      "routingCount": {
+        "p50": 0.06945799995446578,
+        "p95": 0.12737500004004687,
+        "samples": 900
+      },
+      "routingCountPlan": "->  Index Only Scan using idx_contents_user_id on contents  ",
+      "planDefault": "->  Index Scan using users_pkey on users u   | ->  Bitmap Heap Scan on contents c   | ->  Bitmap Index Scan on idx_contents_user_id  ",
+      "planSeqscanOffOnly": "->  Index Scan using users_pkey on users u   | ->  Bitmap Heap Scan on contents c   | ->  Bitmap Index Scan on idx_contents_user_id  ",
+      "planHnsw": "->  Index Scan using idx_contents_embedding_hnsw on contents c   | ->  Index Scan using users_pkey on users u  ",
+      "planIterativeNoOverride": "->  Index Scan using users_pkey on users u   | ->  Bitmap Heap Scan on contents c   | ->  Bitmap Index Scan on idx_contents_user_id  ",
+      "planExactBtree": "->  Bitmap Heap Scan on users u   | ->  Bitmap Index Scan on users_pkey   | ->  Bitmap Heap Scan on contents c   | ->  Bitmap Index Scan on idx_contents_user_id  "
+    },
+    "t450": {
+      "queriesWithAnyTruth": 293,
+      "exact": {
+        "p50": 4.567250000021886,
+        "p95": 4.930249999975786,
+        "correctShareOfExactTop10": 1,
+        "queriesWithExactSameList": 300,
+        "meanRowsReturned": 9.19,
+        "samples": 900
+      },
+      "exact-btree": {
+        "p50": 4.056584000005387,
+        "p95": 4.856040999991819,
+        "correctShareOfExactTop10": 1,
+        "queriesWithExactSameList": 300,
+        "meanRowsReturned": 9.19,
+        "samples": 900
+      },
+      "hnsw-iterative": {
+        "p50": 4.115916999988258,
+        "p95": 5.668208999966737,
+        "correctShareOfExactTop10": 0.9914675767918089,
+        "queriesWithExactSameList": 251,
+        "meanRowsReturned": 9.19,
+        "samples": 900
+      },
+      "production": {
+        "p50": 4.804541999998037,
+        "p95": 5.3012500000186265,
+        "correctShareOfExactTop10": 1,
+        "queriesWithExactSameList": 300,
+        "meanRowsReturned": 9.19,
+        "samples": 900
+      },
+      "iterative-no-override": {
+        "p50": 4.057249999954365,
+        "p95": 4.221499999985099,
+        "correctShareOfExactTop10": 1,
+        "queriesWithExactSameList": 300,
+        "meanRowsReturned": 9.19,
+        "samples": 900
+      },
+      "routingCount": {
+        "p50": 0.07550000003539026,
+        "p95": 0.13024999998742715,
+        "samples": 900
+      },
+      "routingCountPlan": "->  Index Only Scan using idx_contents_user_id on contents  ",
+      "planDefault": "->  Seq Scan on users u   | ->  Bitmap Heap Scan on contents c   | ->  Bitmap Index Scan on idx_contents_user_id  ",
+      "planSeqscanOffOnly": "->  Index Scan using users_pkey on users u   | ->  Bitmap Heap Scan on contents c   | ->  Bitmap Index Scan on idx_contents_user_id  ",
+      "planHnsw": "->  Index Scan using idx_contents_embedding_hnsw on contents c   | ->  Index Scan using users_pkey on users u  ",
+      "planIterativeNoOverride": "->  Seq Scan on users u   | ->  Bitmap Heap Scan on contents c   | ->  Bitmap Index Scan on idx_contents_user_id  ",
+      "planExactBtree": "->  Seq Scan on users u   | ->  Bitmap Heap Scan on contents c   | ->  Bitmap Index Scan on idx_contents_user_id  "
+    },
+    "t600": {
+      "queriesWithAnyTruth": 294,
+      "exact": {
+        "p50": 5.727000000013504,
+        "p95": 5.891541999997571,
+        "correctShareOfExactTop10": 1,
+        "queriesWithExactSameList": 300,
+        "meanRowsReturned": 9.32,
+        "samples": 900
+      },
+      "exact-btree": {
+        "p50": 5.245791999972425,
+        "p95": 5.843624999979511,
+        "correctShareOfExactTop10": 1,
+        "queriesWithExactSameList": 300,
+        "meanRowsReturned": 9.32,
+        "samples": 900
+      },
+      "hnsw-iterative": {
+        "p50": 3.510707999987062,
+        "p95": 4.692459000041708,
+        "correctShareOfExactTop10": 0.9896501457725947,
+        "queriesWithExactSameList": 251,
+        "meanRowsReturned": 9.316666666666666,
+        "samples": 900
+      },
+      "production": {
+        "p50": 4.139041999995243,
+        "p95": 5.368207999970764,
+        "correctShareOfExactTop10": 0.9896501457725947,
+        "queriesWithExactSameList": 272,
+        "meanRowsReturned": 9.316666666666666,
+        "samples": 900
+      },
+      "iterative-no-override": {
+        "p50": 5.237832999962848,
+        "p95": 5.6683329999796115,
+        "correctShareOfExactTop10": 1,
+        "queriesWithExactSameList": 300,
+        "meanRowsReturned": 9.32,
+        "samples": 900
+      },
+      "routingCount": {
+        "p50": 0.07824999996228144,
+        "p95": 0.13479100004769862,
+        "samples": 900
+      },
+      "routingCountPlan": "->  Index Only Scan using idx_contents_user_id on contents  ",
+      "planDefault": "->  Seq Scan on users u   | ->  Bitmap Heap Scan on contents c   | ->  Bitmap Index Scan on idx_contents_user_id  ",
+      "planSeqscanOffOnly": "->  Index Scan using users_pkey on users u   | ->  Bitmap Heap Scan on contents c   | ->  Bitmap Index Scan on idx_contents_user_id  ",
+      "planHnsw": "->  Index Scan using idx_contents_embedding_hnsw on contents c   | ->  Index Scan using users_pkey on users u  ",
+      "planIterativeNoOverride": "->  Seq Scan on users u   | ->  Bitmap Heap Scan on contents c   | ->  Bitmap Index Scan on idx_contents_user_id  ",
+      "planExactBtree": "->  Seq Scan on users u   | ->  Bitmap Heap Scan on contents c   | ->  Bitmap Index Scan on idx_contents_user_id  "
+    }
+  }
+}

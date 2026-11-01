@@ -13,9 +13,13 @@ const load = (name: string) => {
 
 const reach = load("hnsw-reachability.json");
 const before = load("results-before.json");
-const after = load("results-after.json");
+const after = load("results-round1.json");
+const round2 = load("results-round2.json");
+const tuning = load("fusion-tuning.json");
+const trainEmbedding = load("train-embedding-stats.json");
 const vlBefore = load("vector-latency-before.json");
-const vlAfter = load("vector-latency-after.json");
+const vlAfter = load("vector-latency-round1.json");
+const vlRound2 = load("vector-latency-round2.json");
 const fts = load("fts-variants.json");
 const dry = load("ingest-stats-dry-run.json");
 const full = load("ingest-stats.json");
@@ -61,51 +65,97 @@ push(
   "",
 );
 
+// ---- paired comparison of hybrid and vector only, on nDCG@10 --------------
+function pairedComparison(r: any) {
+  const vector = new Map(r.modes.vector.perQuery.map((q: any) => [q.qid, q.ndcg as number]));
+  const diffs: number[] = r.modes.hybrid.perQuery.map((q: any) => q.ndcg - (vector.get(q.qid) as number));
+  const meanOf = (xs: number[]) => xs.reduce((a, b) => a + b, 0) / xs.length;
+
+  // Paired bootstrap, 10,000 resamples, fixed seed so the report is reproducible.
+  let seed = 1234567;
+  const random = () => {
+    seed = (seed + 0x6d2b79f5) | 0;
+    let t = Math.imul(seed ^ (seed >>> 15), 1 | seed);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+  const means = Array.from({ length: 10_000 }, () =>
+    meanOf(diffs.map(() => diffs[Math.floor(random() * diffs.length)]!)),
+  ).sort((a, b) => a - b);
+
+  // Exact two-sided sign test, ties dropped.
+  const { wins, losses } = r.hybridVsVectorNdcg;
+  const n = wins + losses;
+  let tail = 0;
+  let choose = 1;
+  for (let i = 0; i <= Math.min(wins, losses); i++) {
+    tail += choose;
+    choose = (choose * (n - i)) / (i + 1);
+  }
+  return {
+    mean: meanOf(diffs),
+    low: means[249]!,
+    high: means[9749]!,
+    signTestP: Math.min(1, (2 * tail) / 2 ** n),
+  };
+}
+const paired = round2 ? pairedComparison(round2) : null;
+const signed = (x: number) => `${x >= 0 ? "+" : ""}${x.toFixed(4)}`;
+
 // ---- headline --------------------------------------------------------------
-if (after && after.modes.hybrid.ndcg < before.modes.hybrid.ndcg) {
+if (round2 && paired) {
+  const h = round2.modes.hybrid;
+  const v = round2.modes.vector;
+  const c = round2.hybridVsVectorNdcg;
   push(
-    `> **Hybrid got worse after the FTS fix.** nDCG@10 went from ${m(before.modes.hybrid.ndcg)} to ${m(after.modes.hybrid.ndcg)}, and hybrid now scores below vector only (${m(after.modes.vector.ndcg)}). \`/search\` uses hybrid. See "What the after numbers show".`,
+    h.ndcg >= v.ndcg
+      ? `> **Hybrid reaches vector only on test:** nDCG@10 ${m(h.ndcg)} against ${m(v.ndcg)}.`
+      : `> **Hybrid does not reach vector only on test.** nDCG@10 ${m(h.ndcg)} against ${m(v.ndcg)}, a gap of ${signed(paired.mean)} (95% interval ${signed(paired.low)} to ${signed(paired.high)}). Per query: ${c.wins} better, ${c.losses} worse, ${c.ties} tied. The interval includes zero, so this test set cannot separate the two. The weights recover nearly all of round 1's drop, from ${m(after.modes.hybrid.ndcg)}.`,
     "",
   );
 }
 
 // ---- quality ---------------------------------------------------------------
-const qHead = ["Mode", "nDCG@10", "Recall@10", "MRR@10", "Queries with no results"];
-if (after) {
-  push("## Quality: before and after", "");
-  table(
-    ["Mode", "nDCG@10 before", "nDCG@10 after", "Recall@10 before", "Recall@10 after", "MRR@10 before", "MRR@10 after", "No results before", "No results after"],
+const rounds = [
+  ["Before", before],
+  ["Round 1 (FTS fixed, equal weights)", after],
+  ["Round 2 (weighted RRF)", round2],
+].filter(([, r]) => r) as Array<[string, any]>;
+
+push("## Quality", "");
+table(
+  ["Round", "Mode", "nDCG@10", "Recall@10", "MRR@10", "No results"],
+  rounds.flatMap(([name, r]) =>
     MODES.map((mode) => {
-      const b = before.modes[mode];
-      const a = after.modes[mode];
-      return [
-        NAMES[mode], m(b.ndcg), m(a.ndcg), m(b.recall), m(a.recall), m(b.mrr), m(a.mrr),
-        `${b.queriesWithNoResults}/${before.queries}`, `${a.queriesWithNoResults}/${after.queries}`,
-      ];
+      const x = r.modes[mode];
+      return [name, NAMES[mode], m(x.ndcg), m(x.recall), m(x.mrr), `${x.queriesWithNoResults}/${r.queries}`];
     }),
-  );
-  const c = after.hybridVsVectorNdcg;
-  push(
-    `Hybrid against vector only, after, per query on nDCG@10: ${c.wins} better, ${c.losses} worse, ${c.ties} tied.`,
-    `Before: ${before.hybridVsVectorNdcg.wins} better, ${before.hybridVsVectorNdcg.losses} worse, ${before.hybridVsVectorNdcg.ties} tied.`,
-    "",
-  );
-} else {
-  push("## Quality: before (current search behaviour)", "");
-  table(qHead, qualityRows(before));
-  const c = before.hybridVsVectorNdcg;
-  push(`Hybrid against vector only, per query on nDCG@10: ${c.wins} better, ${c.losses} worse, ${c.ties} tied.`, "");
-}
+  ),
+);
+push("Hybrid against vector only, per query on nDCG@10:", "");
+table(
+  ["Round", "Better", "Worse", "Tied"],
+  rounds.map(([name, r]) => {
+    const c = r.hybridVsVectorNdcg;
+    return [name, String(c.wins), String(c.losses), String(c.ties)];
+  }),
+);
 
 // ---- latency ---------------------------------------------------------------
-const latHead = ["Mode", "First run p50", "First run p95", "Warm p50", "Warm p95"];
 push("## Latency through `hybridSearch` (ms)", "");
-push("### Before", "");
-table(latHead, latencyRows(before));
-if (after) {
-  push("### After", "");
-  table(latHead, latencyRows(after));
-}
+table(
+  ["Round", "Mode", "First run p50", "First run p95", "Warm p50", "Warm p95"],
+  rounds.flatMap(([name, r]) =>
+    MODES.map((mode) => {
+      const x = r.modes[mode];
+      return [
+        name, NAMES[mode],
+        ms(x.latencyFirstRun.p50), ms(x.latencyFirstRun.p95),
+        ms(x.latencyWarm.p50), ms(x.latencyWarm.p95),
+      ];
+    }),
+  ),
+);
 push(
   "Database and fusion time only. The `/search` route also makes one OpenAI embedding call per request, which is not included.",
   "",
@@ -114,6 +164,8 @@ push(
 // ---- seq scan vs HNSW ------------------------------------------------------
 const ARM_NAMES: Record<string, string> = {
   exact: "Seq scan (exact)",
+  "exact-btree": "Exact via user_id btree",
+  "hnsw-iterative": "HNSW + iterative scan, no routing",
   production: "`hybridSearch` vector mode (code at that commit)",
   "hnsw-40-override": "HNSW, override, no iterative scan",
   "iterative-no-override": "Iterative scan, no override (planner chooses)",
@@ -124,12 +176,16 @@ const TENANT_NAMES = (r: any): Record<string, string> => ({
   whole: `One user owns every row (${r.corpusRows})`,
   medium: `User owns ${r.rowsByTenantInClone.medium} of ${r.corpusRows} rows`,
   tiny: `User owns ${r.rowsByTenantInClone.tiny} of ${r.corpusRows} rows`,
-  micro: `User owns ${r.rowsByTenantInClone.micro} of ${r.corpusRows} rows (under the 10-row limit, so the exact fallback applies)`,
+  micro: `User owns ${r.rowsByTenantInClone.micro} of ${r.corpusRows} rows`,
+  t150: `User owns ${r.rowsByTenantInClone.t150} of ${r.corpusRows} rows`,
+  t300: `User owns ${r.rowsByTenantInClone.t300} of ${r.corpusRows} rows`,
+  t450: `User owns ${r.rowsByTenantInClone.t450} of ${r.corpusRows} rows`,
+  t600: `User owns ${r.rowsByTenantInClone.t600} of ${r.corpusRows} rows`,
 });
 const vectorTables = (r: any, title: string) => {
   push(`### ${title} (commit \`${short(r.gitCommit)}\`)`, "");
   const names = TENANT_NAMES(r);
-  for (const tenant of ["whole", "medium", "tiny", "micro"].filter((t) => r.tenants[t])) {
+  for (const tenant of ["whole", "medium", "t600", "t450", "t300", "t150", "tiny", "micro"].filter((t) => r.tenants[t])) {
     push(`**${names[tenant]}**`, "");
     table(
       ["Path", "Warm p50 (ms)", "Warm p95 (ms)", "Exact top 10 returned", "Queries matching exact list", "Mean rows"],
@@ -145,7 +201,8 @@ const vectorTables = (r: any, title: string) => {
 };
 push("## Vector arm: seq scan against HNSW, with correctness", "");
 vectorTables(vlBefore, "Before");
-if (vlAfter) vectorTables(vlAfter, "After");
+if (vlAfter) vectorTables(vlAfter, "Round 1");
+if (vlRound2) vectorTables(vlRound2, "Round 2");
 push(
   `Each row is ${vlBefore.queries} queries × ${vlBefore.passes} timed passes after one discarded warm-up pass.`,
   "All paths apply the production 0.3 similarity cutoff. The whole-table row has the same shape as the earlier",
@@ -165,6 +222,69 @@ push(
   "",
 );
 
+if (round2 && vlRound2 && tuning && paired) {
+  const a = round2.modes;
+  const c = round2.hybridVsVectorNdcg;
+  const w = tuning.winner;
+  const t = vlRound2.tenants;
+  push(
+    "## Round 2: weighted RRF",
+    "",
+    `Tuned on the ${tuning.queries}-query **train** split only (\`eval/tune-fusion.ts\`): ${tuning.gridSize} settings, vector weight fixed at 1, FTS weight above 0, chosen by highest nDCG@10. The chosen setting was then run on the test split once.`,
+    "",
+  );
+  table(
+    ["Train split", "FTS weight", "k", "nDCG@10", "Recall@10", "MRR@10", "Better / worse / tied against vector only"],
+    [
+      ["Vector only", "", "", m(tuning.vectorOnly.ndcg), m(tuning.vectorOnly.recall), m(tuning.vectorOnly.mrr), ""],
+      ["Equal weights", "1", "60", m(tuning.equalWeightK60.ndcg), m(tuning.equalWeightK60.recall), m(tuning.equalWeightK60.mrr), `${tuning.equalWeightK60.vsVector.wins} / ${tuning.equalWeightK60.vsVector.losses} / ${tuning.equalWeightK60.vsVector.ties}`],
+      ...tuning.top.slice(0, 5).map((x: any, i: number) => [
+        i === 0 ? "Chosen" : `Runner-up ${i}`, String(x.ftsWeight), String(x.k), m(x.ndcg), m(x.recall), m(x.mrr),
+        `${x.vsVector.wins} / ${x.vsVector.losses} / ${x.vsVector.ties}`,
+      ]),
+    ],
+  );
+  push(
+    `**Result on test, once:** hybrid nDCG@10 ${m(a.hybrid.ndcg)}, Recall@10 ${m(a.hybrid.recall)}, MRR@10 ${m(a.hybrid.mrr)}, against vector only ${m(a.vector.ndcg)}, ${m(a.vector.recall)}, ${m(a.vector.mrr)}. Per query: ${c.wins} better, ${c.losses} worse, ${c.ties} tied.`,
+    "",
+    `- **The goal of hybrid at or above vector only is not met on nDCG@10 or MRR@10.** Recall@10 is level. The mean nDCG@10 difference is ${signed(paired.mean)}, with a paired bootstrap 95% interval of ${signed(paired.low)} to ${signed(paired.high)} and a sign test p of ${paired.signTestP.toFixed(2)}. The two are not distinguishable on this test set.`,
+    `- **On train the chosen setting beat vector only by ${(w.ndcg - tuning.vectorOnly.ndcg).toFixed(4)}.** That margin is small enough that it did not carry over. Other settings were not run on test, so this does not show that no setting could reach it.`,
+    `- **FTS adds latency without a measured quality gain here:** hybrid warm p50 ${ms(a.hybrid.latencyWarm.p50)} ms against ${ms(a.vector.latencyWarm.p50)} ms for vector only. SciFact cannot show what FTS is for, such as exact terms and names in short keyword queries, or results when the embedding call fails.`,
+    "",
+    "## Round 2: routing by user size",
+    "",
+  );
+  const names = TENANT_NAMES(vlRound2);
+  const order = ["micro", "tiny", "t150", "t300", "t450", "t600", "medium", "whole"];
+  table(
+    ["User", "Route", "Exact via btree p50 / p95 (ms)", "HNSW p50 / p95 (ms)", "Production p50 / p95 (ms)", "Exact top 10 returned", "Routing count p50 / p95 (ms)"],
+    order.map((name) => {
+      const x = t[name];
+      const owned = name === "whole" ? vlRound2.corpusRows : vlRound2.rowsByTenantInClone[name];
+      return [
+        names[name]!,
+        owned <= vlRound2.exactScanMaxRows ? "Exact" : "HNSW",
+        `${ms(x["exact-btree"].p50)} / ${ms(x["exact-btree"].p95)}`,
+        `${ms(x["hnsw-iterative"].p50)} / ${ms(x["hnsw-iterative"].p95)}`,
+        `${ms(x.production.p50)} / ${ms(x.production.p95)}`,
+        pct(x.production.correctShareOfExactTop10),
+        `${ms(x.routingCount.p50)} / ${ms(x.routingCount.p95)}`,
+      ];
+    }),
+  );
+  const r1 = vlAfter.tenants;
+  push(
+    `- **Crossover: about ${vlRound2.exactScanMaxRows} rows on this ${vlRound2.corpusRows}-row table.** At ${vlRound2.rowsByTenantInClone.t450} rows the raw paths are level on p50 (${ms(t.t450["exact-btree"].p50)} ms exact, ${ms(t.t450["hnsw-iterative"].p50)} ms HNSW); at ${vlRound2.rowsByTenantInClone.t300} exact wins and at ${vlRound2.rowsByTenantInClone.t600} HNSW wins. The threshold is ${vlRound2.exactScanMaxRows}. Exact also returns every correct row, where HNSW here returned ${pct(t.t450["hnsw-iterative"].correctShareOfExactTop10)} at that size.`,
+    `- **Small users no longer pay for a walk.** The ${vlRound2.rowsByTenantInClone.micro}-row user went from ${ms(r1.micro.production.p50)} ms to ${ms(t.micro.production.p50)} ms, and the ${vlRound2.rowsByTenantInClone.tiny}-row user from ${ms(r1.tiny.production.p50)} ms to ${ms(t.tiny.production.p50)} ms. Both now get 100.00% of the exact top 10.`,
+    `- **Row count:** a bounded \`count(*)\` over \`select 1 ... where user_id = $1 limit ${vlRound2.exactScanMaxRows + 1}\`, an index-only scan on the btree in every plan measured. It reads at most ${vlRound2.exactScanMaxRows + 1} index entries, so it costs about the same for any user: p95 at most ${ms(Math.max(...order.map((n) => t[n].routingCount.p95)))} ms here. There is no counter column to keep in sync. The count is all routing needs: is this user at or below the threshold?`,
+    `- **The btree nearly removed HNSW.** With it present, \`enable_seqscan = off\` alone makes the planner read the user's rows through the btree and sort them, about ${(t.whole["exact-btree"].p50 / t.whole["hnsw-iterative"].p50).toFixed(0)}x slower for the whole-table user. The HNSW route now also turns off bitmap scans and sorts.`,
+    `- **The override is still needed above the threshold,** for the same reason: left alone, the planner gives the whole-table user ${ms(t.whole["iterative-no-override"].p50)} ms against ${ms(t.whole.production.p50)} ms.`,
+    `- **The whole-table figure is now ${(t.whole.exact.p50 / t.whole.production.p50).toFixed(1)}x:** ${ms(t.whole.production.p50)} ms against ${ms(t.whole.exact.p50)} ms for a seq scan.`,
+    `- **Limit: the crossover was measured on one table size.** An HNSW walk for a given user gets longer as other users' rows grow, and the exact scan does not, so on a larger table the crossover is likely higher and ${vlRound2.exactScanMaxRows} would be conservative. That reasoning is not measured. A user just above the threshold on a much larger table could pay for a walk that hits hnsw.max_scan_tuples and then the exact fallback.`,
+    "",
+  );
+}
+
 if (after && vlAfter) {
   const a = after.modes;
   const c = after.hybridVsVectorNdcg;
@@ -175,7 +295,7 @@ if (after && vlAfter) {
   const names = TENANT_NAMES(vlAfter);
   const tenants = ["whole", "medium", "tiny", "micro"];
 
-  push("## What the after numbers show", "");
+  push("## Round 1: what the numbers showed", "", "Kept as measured. Round 2 above supersedes the fusion settings and the latency of the small-user path.", "");
   push(
     `- **FTS improved a lot on its own:** nDCG@10 ${m(b.fts.ndcg)} to ${m(a.fts.ndcg)}, and queries with no results ${b.fts.queriesWithNoResults} to ${a.fts.queriesWithNoResults}.`,
     `- **Hybrid got worse, and this is unresolved.** nDCG@10 ${m(b.hybrid.ndcg)} to ${m(a.hybrid.ndcg)}, Recall@10 ${m(b.hybrid.recall)} to ${m(a.hybrid.recall)}, MRR@10 ${m(b.hybrid.mrr)} to ${m(a.hybrid.mrr)}. Per query against vector only: ${c.wins} better, ${c.losses} worse. RRF weights both arms equally, and FTS now fills its 10 slots at much lower quality (${m(a.fts.ndcg)} against ${m(a.vector.ndcg)}), which is the likely reason: its rows displace good vector rows. This was not tested separately.`,
@@ -267,7 +387,9 @@ push(
   `- **Latency:** ${before.runsPerMode} sequential passes over all queries per mode. Before each mode Postgres restarts and a new Bun process starts. Pass 1 is reported as first run, passes 2 and 3 pooled as warm. The connection is opened before timing starts. p50 and p95 are nearest-rank.`,
   "- **\"First run\" is not fully cold.** Postgres shared buffers and the Bun process are cold, but the macOS file cache survives a Postgres restart and clearing it needs sudo.",
   `- **Environment:** Postgres ${dx.server}, pgvector ${dx.pgvector}, shared_buffers ${dx.sharedBuffers}, default hnsw.ef_search ${dx.efSearch}, HNSW m=16, ef_construction=64, on ${before.machine.cpu} (${before.machine.cores} cores, ${before.machine.memGb} GB). Loopback connection. A developer laptop, not a production server, so compare the numbers with each other, not with production.`,
-  `- **Commits:** before \`${short(before.gitCommit)}\`${after ? `, after \`${short(after.gitCommit)}\`` : ""}.`,
+  `- **Commits:** before \`${short(before.gitCommit)}\`, round 1 \`${short(after.gitCommit)}\`, round 2 \`${short(round2.gitCommit)}\`. Round 2's only later change is a code comment.`,
+  "- **Round 2 database:** the same ingested corpus, with the user_id btree added. The user splits for the small and medium users match earlier rounds, except that the rest of the table is further split for the 150, 300, 450 and 600 row users.",
+  `- **Train embeddings for tuning:** ${trainEmbedding?.embeddingCalls} calls, ${trainEmbedding ? tok(trainEmbedding.embeddingTokens) : "?"} tokens, ${trainEmbedding ? usd((trainEmbedding.embeddingTokens * PRICE.embed) / 1e6) : "?"} at list price (rounded to the cent).`,
   `- **Scale:** ${dx.corpusRows} rows. Behaviour at larger sizes is not measured here.`,
   "",
 );
@@ -284,19 +406,15 @@ push(
   "bun run eval/ingest.ts               # full ingest; resets the local eval database",
   "bun --no-env-file run eval/fts-variants.ts",
   "",
-  `git checkout ${short(before.gitCommit)} -- services/searchService.ts   # before`,
-  "bun --no-env-file run eval/run.ts --label=before",
-  "bun --no-env-file run eval/vector-latency.ts --label=before",
-  ...(after
-    ? [
-        `git checkout ${short(after.gitCommit)} -- services/searchService.ts    # after`,
-        "bun --no-env-file run eval/run.ts --label=after",
-        "bun --no-env-file run eval/vector-latency.ts --label=after",
-      ]
-    : []),
+  "bun run eval/embed-train.ts          # train query embeddings",
+  "bun --no-env-file run eval/tune-fusion.ts",
+  "bun --no-env-file run eval/run.ts --label=round2",
+  "bun --no-env-file run eval/vector-latency.ts --label=round2",
   "bun --no-env-file run eval/hnsw-reachability.ts",
   "bun --no-env-file run eval/report.ts",
   "```",
+  "",
+  `The before and round 1 numbers came from the search code at \`${short(before.gitCommit)}\` and \`${short(after.gitCommit)}\`, with no user_id btree. To rerun them, check out those commits and use the commands in that commit's report.`,
   "",
 );
 
