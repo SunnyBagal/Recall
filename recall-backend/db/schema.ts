@@ -62,6 +62,9 @@ export const contents = pgTable("contents", {
   createdAt:        timestamp("created_at").defaultNow().notNull(),
   updatedAt:        timestamp("updated_at").defaultNow().notNull(),
 }, (t) => [
+  // Per-user lookups: the exact vector scan for small users, and the bounded row
+  // count that routes between it and HNSW (services/searchService.ts).
+  index("idx_contents_user_id").on(t.userId),
   // Approximate-NN (HNSW) index for cosine similarity over the 1536-dim embedding.
   // Opclass MUST be `vector_cosine_ops` to match the `<=>` operator emitted by
   // drizzle's cosineDistance() in the search query — an opclass mismatch means

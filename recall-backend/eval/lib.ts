@@ -71,6 +71,19 @@ export function loadTestQueries(): Query[] {
     .map((q) => ({ id: q._id, text: q.text, relevant: qrels.get(q._id)! }));
 }
 
+/** SciFact train split, used only for choosing settings. */
+export function loadTrainQueries(): Query[] {
+  const qrels = new Map<string, Relevance>();
+  for (const line of readFileSync(join(DATA_DIR, "qrels", "train.tsv"), "utf8").trim().split("\n").slice(1)) {
+    const [qid, docId, score] = line.split("\t") as [string, string, string];
+    if (!qrels.has(qid)) qrels.set(qid, new Map());
+    qrels.get(qid)!.set(docId, Number(score));
+  }
+  return readJsonl<{ _id: string; text: string }>(join(DATA_DIR, "queries.jsonl"))
+    .filter((q) => qrels.has(q._id))
+    .map((q) => ({ id: q._id, text: q.text, relevant: qrels.get(q._id)! }));
+}
+
 // ---- append-only disk cache ------------------------------------------------
 
 /** key -> JSON value, one line per entry, so an interrupted run loses nothing. */

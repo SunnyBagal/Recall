@@ -2,11 +2,28 @@
 // driver, real HNSW and GIN indexes. Vectors are hand-built with known cosines.
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { sql } from "drizzle-orm";
+import { drizzle } from "drizzle-orm/node-postgres";
 import type pg from "pg";
 import type { Db } from "../config/db";
+import * as schema from "../db/schema";
 import { contents, users } from "../db/schema";
-import { hybridSearch } from "../services/searchService";
-import { freshDatabase, vectorNear } from "./pg";
+import { EXACT_SCAN_MAX_ROWS, hybridSearch, nearestContents } from "../services/searchService";
+import { freshDatabase, testDatabaseUrl, vectorNear } from "./pg";
+
+/** A database handle that records every SQL statement it sends. */
+function loggingDb() {
+  const queries: string[] = [];
+  const logged = drizzle({
+    connection: testDatabaseUrl(),
+    schema,
+    logger: { logQuery: (query) => queries.push(query) },
+  });
+  return {
+    db: logged as unknown as Db,
+    queries,
+    close: () => (logged as any).$client.end() as Promise<void>,
+  };
+}
 
 let db: Db;
 let raw: pg.Client;
@@ -16,6 +33,9 @@ let grace: string;
 let crowded: string;
 let quiet: string;
 
+// Must match the HNSW route in nearestContents().
+const HNSW_SETTINGS =
+  "set local enable_seqscan = off; set local enable_bitmapscan = off; set local enable_sort = off; set local hnsw.iterative_scan = relaxed_order";
 const QUERY_AXIS = 0;
 const query = vectorNear(QUERY_AXIS, 1);
 const titles = (rows: any[]) => rows.map((r) => r.title);
@@ -61,7 +81,7 @@ describe("vector arm", () => {
   });
 
   it("with the override and iterative scan, the plan uses the HNSW index", async () => {
-    await raw.query("begin; set local enable_seqscan = off; set local hnsw.iterative_scan = relaxed_order");
+    await raw.query(`begin; ${HNSW_SETTINGS}`);
     const { rows } = await raw.query(
       `explain select c.id from contents c join users u on c.user_id = u.id
        where c.user_id = $1 order by c.embedding <=> $2 limit 10`,
@@ -69,6 +89,17 @@ describe("vector arm", () => {
     );
     await raw.query("rollback");
     expect(rows.map((r) => r["QUERY PLAN"]).join("\n")).toContain("idx_contents_embedding_hnsw");
+  });
+
+  it("with the btree present, turning off seq scans alone does not give HNSW", async () => {
+    await raw.query("begin; set local enable_seqscan = off");
+    const { rows } = await raw.query(
+      `explain select c.id from contents c join users u on c.user_id = u.id
+       where c.user_id = $1 order by c.embedding <=> $2 limit 10`,
+      [ada, JSON.stringify(query)],
+    );
+    await raw.query("rollback");
+    expect(rows.map((r) => r["QUERY PLAN"]).join("\n")).not.toContain("idx_contents_embedding_hnsw");
   });
 
   it("the override does not leak out of its transaction", async () => {
@@ -206,22 +237,24 @@ describe("tenant isolation with the HNSW override", () => {
 
   beforeAll(async () => {
     midling = await user("midling");
-    const rows = Array.from({ length: 400 }, (_, i) => {
-      const spread = 0.01 + 0.03 * (i / 400);
+    const rows = Array.from({ length: 700 }, (_, i) => {
+      const spread = 0.01 + 0.03 * (i / 700);
       const embedding = normalize(center.map((x) => x + spread * gaussian()));
       return { embedding, sim: dot(embedding, center), i };
     }).sort((a, b) => b.sim - a.sim);
 
-    // The nearest 300 are the crowd; `quiet` gets 5 from the far end, all well
-    // above the 0.3 cutoff, and `midling` the next 20. Inserted in the original,
-    // unsorted order.
-    const owner = (rank: number) => (rank < 300 ? crowded : rank < 305 ? quiet : rank < 325 ? midling : grace);
+    // The nearest 600 are the crowd, above EXACT_SCAN_MAX_ROWS; `quiet` gets 5 from
+    // the far end, all well above the 0.3 cutoff, and `midling` the next 20.
+    // Inserted in the original, unsorted order.
+    expect(EXACT_SCAN_MAX_ROWS).toBeLessThan(600);
+    const owner = (rank: number) => (rank < 600 ? crowded : rank < 605 ? quiet : rank < 625 ? midling : grace);
     const values = rows
       .map((r, rank) => ({
         i: r.i,
         userId: owner(rank),
         link: `https://tenant/${r.i}`,
         title: `Tenant row ${r.i}`,
+        extractedText: `Body of tenant row ${r.i}`,
         embedding: r.embedding,
       }))
       .sort((a, b) => a.i - b.i)
@@ -232,7 +265,7 @@ describe("tenant isolation with the HNSW override", () => {
   });
 
   it("the fixture reproduces the bug: without the iterative scan, the small user gets nothing", async () => {
-    await raw.query("begin; set local enable_seqscan = off; set local hnsw.iterative_scan = off");
+    await raw.query(`begin; ${HNSW_SETTINGS}; set local hnsw.iterative_scan = off`);
     const { rows } = await raw.query(
       "select id from contents where user_id = $1 order by embedding <=> $2 limit 10",
       [quiet, JSON.stringify(center)],
@@ -255,8 +288,8 @@ describe("tenant isolation with the HNSW override", () => {
     expect(rows.map((r) => r.id)).toEqual(exact.rows.map((r) => r.id));
   });
 
-  it("regression: the iterative scan fills the top 10 for a user the old path left empty", async () => {
-    await raw.query("begin; set local enable_seqscan = off; set local hnsw.iterative_scan = off");
+  it("regression: the iterative scan fills the top 10 for a user the old path left short", async () => {
+    await raw.query(`begin; ${HNSW_SETTINGS}; set local hnsw.iterative_scan = off`);
     const old = await raw.query(
       "select id from contents where user_id = $1 order by embedding <=> $2 limit 10",
       [midling, JSON.stringify(center)],
@@ -264,10 +297,70 @@ describe("tenant isolation with the HNSW override", () => {
     await raw.query("rollback");
     expect(old.rows.length).toBeLessThan(10);
 
-    const rows = await hybridSearch(db, midling, "zzznomatch", center, undefined, "vector");
+    // Threshold lowered so this user takes the HNSW route.
+    const logged = loggingDb();
+    const rows = await nearestContents(logged.db, midling, center, { exactScanMaxRows: 5 });
+    await logged.close();
+
+    expect(logged.queries.join("\n")).toContain("hnsw.iterative_scan");
+    expect(logged.queries.join("\n")).not.toContain("enable_indexscan");
     expect(rows).toHaveLength(10);
     const sims = rows.map((r) => r.similarity as number);
     expect(sims).toEqual([...sims].sort((a, b) => b - a));
+  });
+
+  describe("routing by the user's row count", () => {
+    it("a small user gets one exact scan and never an HNSW walk", async () => {
+      const logged = loggingDb();
+      await nearestContents(logged.db, quiet, center);
+      await logged.close();
+
+      const text = logged.queries.join("\n");
+      expect(text).toContain("enable_indexscan");
+      expect(text).not.toContain("hnsw.iterative_scan");
+      expect(logged.queries.filter((q) => q.includes("<=>") && q.includes("order by"))).toHaveLength(1);
+    });
+
+    it("a user above the threshold takes HNSW, without the exact fallback", async () => {
+      const logged = loggingDb();
+      const rows = await nearestContents(logged.db, crowded, center);
+      await logged.close();
+
+      const text = logged.queries.join("\n");
+      expect(text).toContain("hnsw.iterative_scan");
+      expect(text).not.toContain("enable_indexscan");
+      expect(rows).toHaveLength(10);
+    });
+
+    it("a threshold of exactly the user's row count stays exact; one lower does not", async () => {
+      const at = loggingDb();
+      await nearestContents(at.db, quiet, center, { exactScanMaxRows: 5 });
+      await at.close();
+      expect(at.queries.join("\n")).not.toContain("hnsw.iterative_scan");
+
+      const below = loggingDb();
+      await nearestContents(below.db, quiet, center, { exactScanMaxRows: 4 });
+      await below.close();
+      expect(below.queries.join("\n")).toContain("hnsw.iterative_scan");
+    });
+
+    it("above the threshold, a short walk still falls back to an exact scan", async () => {
+      // `quiet` has 5 rows, under the limit of 10, so the walk can't fill it.
+      const logged = loggingDb();
+      const rows = await nearestContents(logged.db, quiet, center, { exactScanMaxRows: 2 });
+      await logged.close();
+
+      expect(logged.queries.join("\n")).toContain("enable_indexscan");
+      expect(new Set(rows.map((r) => r.id))).toEqual(new Set(quietIds));
+    });
+
+    it("the bounded count reads the btree for a small user, and stops at the limit for a large one", async () => {
+      const count = `select count(*)::int as n from (select 1 from contents where user_id = $1 limit ${EXACT_SCAN_MAX_ROWS + 1}) as bounded`;
+      const { rows } = await raw.query(`explain ${count}`, [quiet]);
+      expect(rows.map((r) => r["QUERY PLAN"]).join("\n")).toContain("idx_contents_user_id");
+
+      expect((await raw.query(count, [crowded])).rows[0].n).toBe(EXACT_SCAN_MAX_ROWS + 1);
+    });
   });
 
   it("the crowded user still gets a full top 10", async () => {
@@ -280,14 +373,19 @@ describe("tenant isolation with the HNSW override", () => {
     expect(new Set(rows.map((r) => r.id))).toEqual(new Set(quietIds));
   });
 
-  it("neither the iterative scan nor the fallback's settings leak out of the transaction", async () => {
-    // `quiet` has fewer than 10 rows, so this takes the exact fallback.
-    await hybridSearch(db, quiet, "x", center, undefined, "vector");
+  it("no planner setting from either route leaks out of the transaction", async () => {
     const value = async (name: string) =>
       Object.values(((await db.execute(sql.raw(`show ${name}`))) as any).rows[0])[0];
-    expect(await value("hnsw.iterative_scan")).toBe("off");
-    expect(await value("enable_indexscan")).toBe("on");
-    expect(await value("enable_bitmapscan")).toBe("on");
-    expect(await value("enable_seqscan")).toBe("on");
+    const expectDefaults = async () => {
+      expect(await value("hnsw.iterative_scan")).toBe("off");
+      for (const name of ["enable_indexscan", "enable_bitmapscan", "enable_seqscan", "enable_sort"]) {
+        expect(await value(name)).toBe("on");
+      }
+    };
+
+    await hybridSearch(db, quiet, "x", center, undefined, "vector");
+    await expectDefaults();
+    await hybridSearch(db, crowded, "x", center, undefined, "vector");
+    await expectDefaults();
   });
 });

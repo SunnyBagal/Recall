@@ -8,16 +8,18 @@
 //   whole : the eval database as ingested, one user owning every row
 //   medium: a user owning about 20% of the rows, the rest owned by another user
 //   tiny  : a user owning about 1% of the rows, same setup
-//   micro : a user owning 8 rows, under the LIMIT that triggers the exact fallback
+//   micro : a user owning 8 rows
+//   t150, t300, t450, t600 : users owning that many rows, for finding the crossover
 //
 // Arms:
-//   exact             seq scan forced (index scans off). Ground truth.
+//   exact             seq scan forced (index and bitmap scans off). Ground truth.
+//   exact-btree       exact, index scans off so HNSW can't run; the planner may use
+//                     a bitmap scan on the user_id btree.
+//   hnsw-iterative    HNSW forced (seq scans, bitmap scans and sorts off),
+//                     iterative_scan = relaxed_order, no routing and no fallback.
 //   production        hybridSearch(mode "vector"), the code as it is at this commit.
-//   hnsw-40-override  HNSW, ef_search 40, override on, no iterative scan (the old path).
 //   iterative-no-override  iterative scan on, enable_seqscan left alone: what the
 //                     planner picks if the override is removed.
-//   strict-override   HNSW, override on, iterative_scan = strict_order.
-//   relaxed-override  HNSW, override on, iterative_scan = relaxed_order.
 //
 // Every arm applies the same 0.3 similarity cutoff. "correct" is the share of the
 // exact top-10 that the arm returned, averaged over queries with non-empty truth.
@@ -27,7 +29,7 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import pg from "pg";
 import { createDb, type Db } from "../config/db";
-import { hybridSearch } from "../services/searchService";
+import { EXACT_SCAN_MAX_ROWS, hybridSearch } from "../services/searchService";
 import { DiskCache, EVAL_USER_EMAIL, RESULTS_DIR, embeddingKey, evalDatabaseUrl, loadTestQueries } from "./lib";
 import { mean, percentile } from "./metrics";
 
@@ -68,7 +70,7 @@ async function buildClone() {
   const c = new pg.Client({ connectionString: cloneUrl });
   await c.connect();
   const ids: Record<string, string> = {};
-  for (const name of ["tiny", "medium", "micro"]) {
+  for (const name of ["tiny", "medium", "micro", "t150", "t300", "t450", "t600"]) {
     const r = await c.query(
       `insert into users (username, email, password) values ($1, $2, 'x') returning id`,
       [name, `${name}@scifact.example`],
@@ -85,11 +87,23 @@ async function buildClone() {
        select id from contents where ${bucket} > 20 order by md5(link) limit 8)`,
     [ids.micro],
   );
+  for (const [name, size] of [["t150", 150], ["t300", 300], ["t450", 450], ["t600", 600]] as const) {
+    await c.query(
+      `update contents set user_id = $1 where id in (
+         select id from contents where ${bucket} > 20 and user_id not in ($2, $3, $4, $5)
+         order by md5(link) limit ${size})`,
+      [ids[name], ids.micro, ids.t150, ids.t300, ids.t450],
+    );
+  }
   await c.query("vacuum analyze contents");
   const counts = await c.query("select u.username, count(*)::int as n from contents c join users u on u.id = c.user_id group by 1");
   await c.end();
   return { ids, counts: Object.fromEntries(counts.rows.map((r) => [r.username, r.n])) };
 }
+
+// Must match the HNSW route in nearestContents().
+const HNSW_SETTINGS =
+  "set local enable_seqscan = off; set local enable_bitmapscan = off; set local enable_sort = off; set local hnsw.iterative_scan = relaxed_order";
 
 type Arm = (userId: string, vector: number[]) => Promise<string[]>;
 
@@ -148,11 +162,10 @@ async function runTenant(url: string, userId: string) {
 
   const arms: Record<string, Arm> = {
     exact,
+    "exact-btree": rawArm(raw, "set local enable_indexscan = off"),
+    "hnsw-iterative": rawArm(raw, HNSW_SETTINGS),
     production,
-    "hnsw-40-override": rawArm(raw, "set local enable_seqscan = off; set local hnsw.iterative_scan = off"),
-    "iterative-no-override": rawArm(raw, "set local hnsw.iterative_scan = strict_order"),
-    "strict-override": rawArm(raw, "set local enable_seqscan = off; set local hnsw.iterative_scan = strict_order"),
-    "relaxed-override": rawArm(raw, "set local enable_seqscan = off; set local hnsw.iterative_scan = relaxed_order"),
+    "iterative-no-override": rawArm(raw, "set local hnsw.iterative_scan = relaxed_order"),
   };
 
   const out: Record<string, any> = { queriesWithAnyTruth: truth.filter((t) => t.length).length };
@@ -161,16 +174,33 @@ async function runTenant(url: string, userId: string) {
     console.log(name, JSON.stringify(out[name]));
   }
 
+  // Cost of the bounded row count that routes each search.
+  const countSql = `select count(*)::int as n from (select 1 from contents where user_id = $1 limit ${EXACT_SCAN_MAX_ROWS + 1}) as bounded`;
+  for (let i = 0; i < 50; i++) await raw.query(countSql, [userId]);
+  const countMs: number[] = [];
+  for (let i = 0; i < 900; i++) {
+    const t0 = performance.now();
+    await raw.query(countSql, [userId]);
+    countMs.push(performance.now() - t0);
+  }
+  out.routingCount = { p50: percentile(countMs, 50), p95: percentile(countMs, 95), samples: countMs.length };
+  await raw.query("begin");
+  const countPlan = await raw.query(`explain ${countSql}`, [userId]);
+  await raw.query("rollback");
+  out.routingCountPlan = countPlan.rows.map((x) => x["QUERY PLAN"]).filter((l: string) => /Scan/.test(l)).map((l: string) => l.trim().replace(/\(cost.*$/, "")).join(" | ");
+
   // Which plan does each setting give? (first test query)
   const plan = async (settings: string) => {
     await raw.query(`begin; ${settings}`);
     const r = await raw.query(`explain ${SELECT}`, [userId, JSON.stringify(vectors[0])]);
     await raw.query("rollback");
-    return r.rows.map((x) => x["QUERY PLAN"]).filter((l: string) => /Scan|Sort/.test(l)).map((l: string) => l.trim().replace(/\(cost.*$/, "")).join(" | ");
+    return r.rows.map((x) => x["QUERY PLAN"]).filter((l: string) => /Scan/.test(l)).map((l: string) => l.trim().replace(/\(cost.*$/, "")).join(" | ");
   };
   out.planDefault = await plan("select 1");
-  out.planOverride = await plan("set local enable_seqscan = off");
-  out.planIterativeNoOverride = await plan("set local hnsw.iterative_scan = strict_order");
+  out.planSeqscanOffOnly = await plan("set local enable_seqscan = off");
+  out.planHnsw = await plan(HNSW_SETTINGS);
+  out.planIterativeNoOverride = await plan("set local hnsw.iterative_scan = relaxed_order");
+  out.planExactBtree = await plan("set local enable_indexscan = off");
 
   await db.$client.end();
   await raw.end();
@@ -191,6 +221,10 @@ for (const [name, url, id] of [
   ["medium", cloneUrl, ids.medium!],
   ["tiny", cloneUrl, ids.tiny!],
   ["micro", cloneUrl, ids.micro!],
+  ["t150", cloneUrl, ids.t150!],
+  ["t300", cloneUrl, ids.t300!],
+  ["t450", cloneUrl, ids.t450!],
+  ["t600", cloneUrl, ids.t600!],
 ] as const) {
   console.log(`--- ${name}`);
   tenants[name] = await runTenant(url, id);
@@ -205,6 +239,7 @@ const output = {
   rowsByTenantInClone: counts,
   queries: queries.length,
   passes: PASSES,
+  exactScanMaxRows: EXACT_SCAN_MAX_ROWS,
   tenants,
 };
 const path = join(RESULTS_DIR, `vector-latency-${label}.json`);

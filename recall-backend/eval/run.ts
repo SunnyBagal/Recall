@@ -109,7 +109,7 @@ async function diagnostics() {
   const overlaps: number[] = [];
   for (const q of queries) {
     const vector = JSON.stringify(embeddings.get(q.id));
-    await client.query("begin; set local enable_seqscan = off");
+    await client.query("begin; set local enable_seqscan = off; set local enable_bitmapscan = off; set local enable_sort = off");
     const ann = await client.query(topK, [userId, vector]);
     await client.query("rollback");
     await client.query("begin; set local enable_indexscan = off; set local enable_bitmapscan = off");
