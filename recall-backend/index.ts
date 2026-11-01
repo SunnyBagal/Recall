@@ -3,10 +3,9 @@ import jwt from "jsonwebtoken";
 import argon2 from "argon2";
 import cors from "cors";
 import { nanoid } from "nanoid";
-import { eq, or, and, sql, desc, gt } from "drizzle-orm";
-import { cosineDistance } from "drizzle-orm";
+import { eq, or, and, desc } from "drizzle-orm";
 import { authMiddleware } from "./middleware/middleware";
-import { hybridSearch } from "./services/searchService";
+import { hybridSearch, nearestContents } from "./services/searchService";
 
 import { createDb, databaseUrlOrExit, type Db } from "./config/db";
 import { users, contents, shareLinks } from "./db/schema";
@@ -382,10 +381,10 @@ export function createApp(deps: AppDeps) {
       const queryEmbedding = await generateEmbedding(message);
 
       if (queryEmbedding) {
-        const similarity = sql<number>`1 - (${cosineDistance(contents.embedding, queryEmbedding)})`;
-
-        const vectorResults = await db
-          .select({
+        const vectorResults = await nearestContents(db, userId, queryEmbedding, {
+          limit: 5,
+          minSimilarity: 0.25,
+          fields: {
             id: contents.id,
             title: contents.title,
             link: contents.link,
@@ -394,11 +393,8 @@ export function createApp(deps: AppDeps) {
             extractedText: contents.extractedText,
             ogTitle: contents.ogTitle,
             ogDescription: contents.ogDescription,
-          })
-          .from(contents)
-          .where(and(eq(contents.userId, userId), gt(similarity, 0.25)))
-          .orderBy(desc(similarity))
-          .limit(5);
+          },
+        });
 
       
         const existingIds = new Set(relevantContent.map((c) => c.id));

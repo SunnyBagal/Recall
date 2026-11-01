@@ -3,11 +3,15 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { sql } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/node-postgres";
+import jwt from "jsonwebtoken";
+import request from "supertest";
 import type pg from "pg";
 import type { Db } from "../config/db";
 import * as schema from "../db/schema";
 import { contents, users } from "../db/schema";
+import { createApp } from "../index";
 import { EXACT_SCAN_MAX_ROWS, hybridSearch, nearestContents } from "../services/searchService";
+import { fakeAnthropic, fakeEmbedding, fakeQueue } from "../test/helpers/app";
 import { freshDatabase, testDatabaseUrl, vectorNear } from "./pg";
 
 /** A database handle that records every SQL statement it sends. */
@@ -360,6 +364,57 @@ describe("tenant isolation with the HNSW override", () => {
       expect(rows.map((r) => r["QUERY PLAN"]).join("\n")).toContain("idx_contents_user_id");
 
       expect((await raw.query(count, [crowded])).rows[0].n).toBe(EXACT_SCAN_MAX_ROWS + 1);
+    });
+  });
+
+  describe("POST /api/v1/chat, through the same search", () => {
+    const chat = async (userId: string) => {
+      const token = jwt.sign({ userId }, process.env.JWT_SECRET!);
+      const anthropic = fakeAnthropic({ streamText: ["ok"] });
+      const embedding = fakeEmbedding(center);
+      const logged = loggingDb();
+      const app = createApp({
+        db: logged.db,
+        queue: fakeQueue().queue,
+        generateEmbedding: embedding.generateEmbedding,
+        anthropic: anthropic.anthropic,
+      });
+      const res = await request(app).post("/api/v1/chat").set("Authorization", token).send({ message: "question" });
+      await logged.close();
+      const frames = res.text.split("\n\n").filter(Boolean).map((f) => JSON.parse(f.replace(/^data: /, "")));
+      return { citations: frames[0].citations, system: anthropic.streamCalls[0].system, queries: logged.queries };
+    };
+
+    it("a small user in a crowded index gets their rows, nearest first, with the page text", async () => {
+      const exact = await raw.query(
+        "select id, title from contents where user_id = $1 order by embedding <=> $2",
+        [quiet, JSON.stringify(center)],
+      );
+
+      const { citations, system, queries } = await chat(quiet);
+
+      expect(citations.map((c: any) => c.id)).toEqual(exact.rows.map((r) => r.id));
+      expect(system).toContain(`Body of ${exact.rows[0].title.toLowerCase()}`);
+      expect(queries.join("\n")).not.toContain("hnsw.iterative_scan");
+    });
+
+    it("a large user takes the HNSW route and gets 5 citations", async () => {
+      const { citations, queries } = await chat(crowded);
+
+      expect(citations).toHaveLength(5);
+      expect(queries.join("\n")).toContain("hnsw.iterative_scan");
+    });
+
+    it("keeps chat's own 0.25 cutoff", async () => {
+      const [row] = await db
+        .insert(contents)
+        .values({ userId: ada, link: "https://cut", title: "Cutoff row", embedding: vectorNear(900, 0.28, 901) })
+        .returning();
+      const axis = vectorNear(900, 1);
+      const kept = await nearestContents(db, ada, axis, { limit: 5, minSimilarity: 0.25 });
+      const dropped = await nearestContents(db, ada, axis, { limit: 5, minSimilarity: 0.3 });
+      expect(kept.map((r) => r.id)).toContain(row!.id);
+      expect(dropped.map((r) => r.id)).not.toContain(row!.id);
     });
   });
 
