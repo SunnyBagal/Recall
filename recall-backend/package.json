@@ -3,13 +3,21 @@
   "module": "index.ts",
   "type": "module",
   "private": true,
+  "scripts": {
+    "test": "bun run test:bun && bun run test:vitest",
+    "test:bun": "bun test ./test",
+    "test:vitest": "vitest run"
+  },
   "devDependencies": {
     "@electric-sql/pglite": "^0.5.8",
     "@electric-sql/pglite-pgvector": "^0.0.9",
     "@types/bun": "latest",
     "@types/pg": "^8.20.0",
+    "@types/supertest": "^7.2.1",
     "drizzle-kit": "^0.31.10",
-    "tsx": "^4.22.3"
+    "supertest": "^7.3.1",
+    "tsx": "^4.22.3",
+    "vitest": "^5.0.5"
   },
   "peerDependencies": {
     "typescript": "^5"

@@ -19,6 +19,46 @@ export interface HybridSearchTimings {
 const RRF_K = 60;
 const LIMIT = 10;
 
+// Which retrieval arms run. Production always uses the default ("hybrid"); the
+// eval harness uses the other two to measure each arm through this same code.
+export type SearchMode = "hybrid" | "vector" | "fts";
+
+/**
+ * Reciprocal Rank Fusion. `idx` is 0-based, so the top row of an arm scores
+ * 1/k rather than the textbook 1/(k+1). Ties keep insertion order: vector arm
+ * first, then keyword arm. A row in both arms keeps the vector arm's copy
+ * (which carries `similarity`).
+ */
+export function reciprocalRankFusion<T extends Record<string, any>>(
+  vectorResults: T[],
+  keywordResults: T[],
+  limit: number = LIMIT,
+  k: number = RRF_K,
+): T[] {
+  const scores = new Map<string, { score: number; item: T }>();
+
+  vectorResults.forEach((item, idx) => {
+    const existing = scores.get(item.id);
+    scores.set(item.id, {
+      score: (existing?.score ?? 0) + 1 / (idx + k),
+      item,
+    });
+  });
+
+  keywordResults.forEach((item, idx) => {
+    const existing = scores.get(item.id);
+    scores.set(item.id, {
+      score: (existing?.score ?? 0) + 1 / (idx + k),
+      item: existing?.item ?? item,
+    });
+  });
+
+  return Array.from(scores.values())
+    .sort((a, b) => b.score - a.score)
+    .slice(0, limit)
+    .map(({ item }) => item);
+}
+
 // Shared projection for both retrieval arms.
 const baseFields = {
   id: contents.id,
@@ -58,6 +98,7 @@ export async function hybridSearch(
   query: string,
   queryEmbedding: number[] | null,
   timings?: HybridSearchTimings,
+  mode: SearchMode = "hybrid",
 ) {
   // NOTE: the two DB queries below run SEQUENTIALLY (separate awaits) — the
   // vector arm fully completes before the keyword arm starts. This is being
@@ -66,7 +107,7 @@ export async function hybridSearch(
 
   // ---- Dense / vector arm -------------------------------------------------
   let vectorResults: Array<Record<string, any>> = [];
-  if (queryEmbedding) {
+  if (queryEmbedding && mode !== "fts") {
     const distance = cosineDistance(contents.embedding, queryEmbedding); // emits: embedding <=> $vec
     const similarity = sql<number>`1 - (${distance})`;
 
@@ -125,7 +166,7 @@ export async function hybridSearch(
   // row, so the ordering is as arbitrary as the ILIKE path's missing ORDER BY.
   const tsq = sql`websearch_to_tsquery('english', ${query})`;
   const tk = timings ? performance.now() : 0;
-  const keywordResults = await db
+  const keywordResults: Array<Record<string, any>> = mode === "vector" ? [] : await db
     .select(baseFields)
     .from(contents)
     .innerJoin(users, eq(contents.userId, users.id))
@@ -141,28 +182,7 @@ export async function hybridSearch(
 
   // ---- Reciprocal Rank Fusion (in app code) -------------------------------
   const tf = timings ? performance.now() : 0;
-  const scores = new Map<string, { score: number; item: any }>();
-
-  vectorResults.forEach((item, idx) => {
-    const existing = scores.get(item.id);
-    scores.set(item.id, {
-      score: (existing?.score ?? 0) + 1 / (idx + RRF_K),
-      item,
-    });
-  });
-
-  keywordResults.forEach((item, idx) => {
-    const existing = scores.get(item.id);
-    scores.set(item.id, {
-      score: (existing?.score ?? 0) + 1 / (idx + RRF_K),
-      item: existing?.item ?? item,
-    });
-  });
-
-  const merged = Array.from(scores.values())
-    .sort((a, b) => b.score - a.score)
-    .slice(0, LIMIT)
-    .map(({ item }) => item);
+  const merged = reciprocalRankFusion(vectorResults, keywordResults);
   if (timings) timings.fusionMs = performance.now() - tf;
 
   return merged;
