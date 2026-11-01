@@ -108,20 +108,23 @@ const ARM_NAMES: Record<string, string> = {
   production: "`hybridSearch` vector mode (code at that commit)",
   "hnsw-40-override": "HNSW, override, no iterative scan",
   "iterative-no-override": "Iterative scan, no override (planner chooses)",
+  "strict-override": "HNSW, override, iterative strict_order",
+  "relaxed-override": "HNSW, override, iterative relaxed_order",
 };
 const TENANT_NAMES = (r: any): Record<string, string> => ({
   whole: `One user owns every row (${r.corpusRows})`,
   medium: `User owns ${r.rowsByTenantInClone.medium} of ${r.corpusRows} rows`,
   tiny: `User owns ${r.rowsByTenantInClone.tiny} of ${r.corpusRows} rows`,
+  micro: `User owns ${r.rowsByTenantInClone.micro} of ${r.corpusRows} rows (under the 10-row limit, so the exact fallback applies)`,
 });
 const vectorTables = (r: any, title: string) => {
   push(`### ${title} (commit \`${short(r.gitCommit)}\`)`, "");
   const names = TENANT_NAMES(r);
-  for (const tenant of ["whole", "medium", "tiny"]) {
+  for (const tenant of ["whole", "medium", "tiny", "micro"].filter((t) => r.tenants[t])) {
     push(`**${names[tenant]}**`, "");
     table(
       ["Path", "Warm p50 (ms)", "Warm p95 (ms)", "Exact top 10 returned", "Queries matching exact list", "Mean rows"],
-      Object.keys(ARM_NAMES).map((arm) => {
+      Object.keys(ARM_NAMES).filter((arm) => r.tenants[tenant][arm]).map((arm) => {
         const x = r.tenants[tenant][arm];
         return [
           ARM_NAMES[arm]!, ms(x.p50), ms(x.p95), pct(x.correctShareOfExactTop10),

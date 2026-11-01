@@ -130,19 +130,53 @@ export async function hybridSearch(
     // Removing the threshold alone does NOT flip the plan (confirmed by
     // EXPLAIN); disabling seqscan for this one transaction does. It's scoped to
     // this transaction via SET LOCAL, so nothing leaks to other queries.
+    //
+    // SET LOCAL hnsw.iterative_scan = relaxed_order (pgvector >= 0.8): HNSW picks
+    // its ef_search candidates BEFORE the user_id filter runs, so without this a
+    // user whose rows aren't among the table's nearest candidates loses results,
+    // up to all of them. The iterative scan keeps walking the graph until LIMIT
+    // rows pass the filter.
+    //
+    // relaxed_order, not strict_order: on SciFact, strict returned fewer of the
+    // exact top 10 at the same latency (eval/RESULTS.md). Relaxed can return rows
+    // slightly out of order, so they are re-sorted by similarity below.
+    //
+    // Exact fallback: fewer than LIMIT rows means the walk ended early. Either the
+    // user has few rows, or it hit hnsw.max_scan_tuples (default 20000), or some
+    // of the user's rows have no incoming graph links, which no index scan can
+    // reach. A user with few saved items must not permanently lose one, so rerun
+    // exactly. This can't help when LIMIT rows did come back: an unreachable row
+    // that should have ranked in them stays missed.
+    //
+    // The seqscan override is still needed with iterative scan on: the planner
+    // still picks a Seq Scan without it, which is correct but much slower for a
+    // user who owns most of the table (eval/RESULTS.md).
     const rows = await db.transaction(async (tx) => {
       await tx.execute(sql`set local enable_seqscan = off`);
-      return tx
-        .select({ ...baseFields, similarity })
-        .from(contents)
-        .innerJoin(users, eq(contents.userId, users.id))
-        .where(eq(contents.userId, userId))
-        .orderBy(asc(distance))
-        .limit(LIMIT);
+      await tx.execute(sql`set local hnsw.iterative_scan = relaxed_order`);
+      const nearest = () =>
+        tx
+          .select({ ...baseFields, similarity })
+          .from(contents)
+          .innerJoin(users, eq(contents.userId, users.id))
+          .where(eq(contents.userId, userId))
+          .orderBy(asc(distance))
+          .limit(LIMIT);
+
+      const approximate = await nearest();
+      if (approximate.length === LIMIT) return approximate;
+
+      await tx.execute(sql`set local enable_seqscan = on`);
+      await tx.execute(sql`set local enable_indexscan = off`);
+      await tx.execute(sql`set local enable_bitmapscan = off`);
+      return nearest();
     });
 
-    // 0.3 similarity cutoff, moved out of SQL (see above).
-    vectorResults = rows.filter((r) => (r.similarity as number) > 0.3);
+    // 0.3 similarity cutoff, moved out of SQL (see above). Sorted because
+    // relaxed_order does not guarantee distance order, and RRF scores by position.
+    vectorResults = rows
+      .filter((r) => (r.similarity as number) > 0.3)
+      .sort((a, b) => (b.similarity as number) - (a.similarity as number));
 
     if (timings) timings.vectorMs = performance.now() - t0;
   } else if (timings) {

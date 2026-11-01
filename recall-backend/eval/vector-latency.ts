@@ -8,6 +8,7 @@
 //   whole : the eval database as ingested, one user owning every row
 //   medium: a user owning about 20% of the rows, the rest owned by another user
 //   tiny  : a user owning about 1% of the rows, same setup
+//   micro : a user owning 8 rows, under the LIMIT that triggers the exact fallback
 //
 // Arms:
 //   exact             seq scan forced (index scans off). Ground truth.
@@ -15,6 +16,8 @@
 //   hnsw-40-override  HNSW, ef_search 40, override on, no iterative scan (the old path).
 //   iterative-no-override  iterative scan on, enable_seqscan left alone: what the
 //                     planner picks if the override is removed.
+//   strict-override   HNSW, override on, iterative_scan = strict_order.
+//   relaxed-override  HNSW, override on, iterative_scan = relaxed_order.
 //
 // Every arm applies the same 0.3 similarity cutoff. "correct" is the share of the
 // exact top-10 that the arm returned, averaged over queries with non-empty truth.
@@ -65,7 +68,7 @@ async function buildClone() {
   const c = new pg.Client({ connectionString: cloneUrl });
   await c.connect();
   const ids: Record<string, string> = {};
-  for (const name of ["tiny", "medium"]) {
+  for (const name of ["tiny", "medium", "micro"]) {
     const r = await c.query(
       `insert into users (username, email, password) values ($1, $2, 'x') returning id`,
       [name, `${name}@scifact.example`],
@@ -76,6 +79,12 @@ async function buildClone() {
   const bucket = `(('x' || substr(md5(link), 1, 8))::bit(32)::bigint % 100)`;
   await c.query(`update contents set user_id = $1 where ${bucket} = 0`, [ids.tiny]);
   await c.query(`update contents set user_id = $1 where ${bucket} between 1 and 20`, [ids.medium]);
+  // 8 rows from the remainder: under LIMIT, so production takes the exact fallback.
+  await c.query(
+    `update contents set user_id = $1 where id in (
+       select id from contents where ${bucket} > 20 order by md5(link) limit 8)`,
+    [ids.micro],
+  );
   await c.query("vacuum analyze contents");
   const counts = await c.query("select u.username, count(*)::int as n from contents c join users u on u.id = c.user_id group by 1");
   await c.end();
@@ -142,6 +151,8 @@ async function runTenant(url: string, userId: string) {
     production,
     "hnsw-40-override": rawArm(raw, "set local enable_seqscan = off; set local hnsw.iterative_scan = off"),
     "iterative-no-override": rawArm(raw, "set local hnsw.iterative_scan = strict_order"),
+    "strict-override": rawArm(raw, "set local enable_seqscan = off; set local hnsw.iterative_scan = strict_order"),
+    "relaxed-override": rawArm(raw, "set local enable_seqscan = off; set local hnsw.iterative_scan = relaxed_order"),
   };
 
   const out: Record<string, any> = { queriesWithAnyTruth: truth.filter((t) => t.length).length };
@@ -179,6 +190,7 @@ for (const [name, url, id] of [
   ["whole", evalUrl, wholeId],
   ["medium", cloneUrl, ids.medium!],
   ["tiny", cloneUrl, ids.tiny!],
+  ["micro", cloneUrl, ids.micro!],
 ] as const) {
   console.log(`--- ${name}`);
   tenants[name] = await runTenant(url, id);

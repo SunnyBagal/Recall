@@ -60,8 +60,8 @@ describe("vector arm", () => {
     expect(titles(rows)).not.toContain("Graphene for grace");
   });
 
-  it("with the override, the plan uses the HNSW index", async () => {
-    await raw.query("begin; set local enable_seqscan = off");
+  it("with the override and iterative scan, the plan uses the HNSW index", async () => {
+    await raw.query("begin; set local enable_seqscan = off; set local hnsw.iterative_scan = relaxed_order");
     const { rows } = await raw.query(
       `explain select c.id from contents c join users u on c.user_id = u.id
        where c.user_id = $1 order by c.embedding <=> $2 limit 10`,
@@ -148,40 +148,116 @@ describe("hybrid", () => {
 // Keep this block last: its rows change what the HNSW graph looks like for the
 // blocks above.
 describe("tenant isolation with the HNSW override", () => {
+  // A row with no incoming graph links can't be reached by any index scan, however
+  // far the iterative scan walks. This fixture leaves about 10% of rows like that,
+  // at random, so `quiet`'s complete result set below depends on the exact fallback.
+  // Seeded, so the vectors are the same on every run. Rows are drawn from one
+  // distribution and split by closeness to the query, as tenants' rows share an
+  // index in production. Hand-built orthogonal vectors don't work here: they
+  // leave rows with no incoming graph links, which no index scan can reach.
+  const DIMS = 1536;
+  const seeded = (seed: number) => () => {
+    seed = (seed + 0x6d2b79f5) | 0;
+    let t = Math.imul(seed ^ (seed >>> 15), 1 | seed);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+  const random = seeded(42);
+  const gaussian = () => Math.sqrt(-2 * Math.log(1 - random())) * Math.cos(2 * Math.PI * random());
+  const normalize = (v: number[]) => {
+    const n = Math.hypot(...v);
+    return v.map((x) => x / n);
+  };
+  const dot = (a: number[], b: number[]) => a.reduce((sum, x, i) => sum + x * b[i]!, 0);
+
+  const center = normalize(Array.from({ length: DIMS }, gaussian));
+  let quietIds: string[];
+  let midling: string;
+
   beforeAll(async () => {
-    // `crowded` owns many rows closer to the query than anything `quiet` owns.
-    await db.insert(contents).values(
-      Array.from({ length: 300 }, (_, i) => ({
-        userId: crowded,
-        link: `https://crowded/${i}`,
-        title: `Crowded ${i}`,
-        embedding: vectorNear(100, 0.99, 200 + i),
-      })),
-    );
-    await db.insert(contents).values(
-      Array.from({ length: 5 }, (_, i) => ({
-        userId: quiet,
-        link: `https://quiet/${i}`,
-        title: `Quiet ${i}`,
-        embedding: vectorNear(100, 0.7, 600 + i),
-      })),
-    );
+    midling = await user("midling");
+    const rows = Array.from({ length: 400 }, (_, i) => {
+      const spread = 0.01 + 0.03 * (i / 400);
+      const embedding = normalize(center.map((x) => x + spread * gaussian()));
+      return { embedding, sim: dot(embedding, center), i };
+    }).sort((a, b) => b.sim - a.sim);
+
+    // The nearest 300 are the crowd; `quiet` gets 5 from the far end, all well
+    // above the 0.3 cutoff, and `midling` the next 20. Inserted in the original,
+    // unsorted order.
+    const owner = (rank: number) => (rank < 300 ? crowded : rank < 305 ? quiet : rank < 325 ? midling : grace);
+    const values = rows
+      .map((r, rank) => ({
+        i: r.i,
+        userId: owner(rank),
+        link: `https://tenant/${r.i}`,
+        title: `Tenant row ${r.i}`,
+        embedding: r.embedding,
+      }))
+      .sort((a, b) => a.i - b.i)
+      .map(({ i: _i, ...v }) => v);
+    await db.insert(contents).values(values);
     await raw.query("analyze contents");
+    quietIds = (await raw.query("select id from contents where user_id = $1", [quiet])).rows.map((r) => r.id);
   });
 
-  it("KNOWN BUG: post-filtering hides a user's rows when other tenants crowd the neighbourhood", async () => {
-    // `quiet` owns 5 rows at similarity 0.7, well above the 0.3 cutoff, and an
-    // exact search finds all 5. The index returns ef_search=40 candidates, all
-    // owned by `crowded`, and then the user_id filter removes them.
-    const axis100 = vectorNear(100, 1);
-    const exact = await raw.query(
-      `select count(*)::int as n from contents
-       where user_id = $1 and 1 - (embedding <=> $2) > 0.3`,
-      [quiet, JSON.stringify(axis100)],
+  it("the fixture reproduces the bug: without the iterative scan, the small user gets nothing", async () => {
+    await raw.query("begin; set local enable_seqscan = off; set local hnsw.iterative_scan = off");
+    const { rows } = await raw.query(
+      "select id from contents where user_id = $1 order by embedding <=> $2 limit 10",
+      [quiet, JSON.stringify(center)],
     );
-    expect(exact.rows[0].n).toBe(5);
-
-    const rows = await hybridSearch(db, quiet, "zzznomatch", axis100, undefined, "vector");
+    await raw.query("rollback");
     expect(rows.length).toBeLessThan(5);
+  });
+
+  it("regression: a small user gets all their rows when other tenants crowd the neighbourhood", async () => {
+    const rows = await hybridSearch(db, quiet, "zzznomatch", center, undefined, "vector");
+    expect(new Set(rows.map((r) => r.id))).toEqual(new Set(quietIds));
+  });
+
+  it("a small user's results come back in distance order, matching an exact search", async () => {
+    const exact = await raw.query(
+      `select c.id from contents c where c.user_id = $1 order by c.embedding <=> $2`,
+      [quiet, JSON.stringify(center)],
+    );
+    const rows = await hybridSearch(db, quiet, "zzznomatch", center, undefined, "vector");
+    expect(rows.map((r) => r.id)).toEqual(exact.rows.map((r) => r.id));
+  });
+
+  it("regression: the iterative scan fills the top 10 for a user the old path left empty", async () => {
+    await raw.query("begin; set local enable_seqscan = off; set local hnsw.iterative_scan = off");
+    const old = await raw.query(
+      "select id from contents where user_id = $1 order by embedding <=> $2 limit 10",
+      [midling, JSON.stringify(center)],
+    );
+    await raw.query("rollback");
+    expect(old.rows.length).toBeLessThan(10);
+
+    const rows = await hybridSearch(db, midling, "zzznomatch", center, undefined, "vector");
+    expect(rows).toHaveLength(10);
+    const sims = rows.map((r) => r.similarity as number);
+    expect(sims).toEqual([...sims].sort((a, b) => b - a));
+  });
+
+  it("the crowded user still gets a full top 10", async () => {
+    const rows = await hybridSearch(db, crowded, "zzznomatch", center, undefined, "vector");
+    expect(rows).toHaveLength(10);
+  });
+
+  it("hybrid carries the small user's rows through fusion", async () => {
+    const rows = await hybridSearch(db, quiet, "zzznomatch", center);
+    expect(new Set(rows.map((r) => r.id))).toEqual(new Set(quietIds));
+  });
+
+  it("neither the iterative scan nor the fallback's settings leak out of the transaction", async () => {
+    // `quiet` has fewer than 10 rows, so this takes the exact fallback.
+    await hybridSearch(db, quiet, "x", center, undefined, "vector");
+    const value = async (name: string) =>
+      Object.values(((await db.execute(sql.raw(`show ${name}`))) as any).rows[0])[0];
+    expect(await value("hnsw.iterative_scan")).toBe("off");
+    expect(await value("enable_indexscan")).toBe("on");
+    expect(await value("enable_bitmapscan")).toBe("on");
+    expect(await value("enable_seqscan")).toBe("on");
   });
 });
