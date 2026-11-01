@@ -52,21 +52,17 @@ describe("POST /api/v1/brain/share", () => {
 });
 
 describe("GET /api/v1/brain/:shareLink", () => {
-  test("needs no token and returns the owner's username and full content rows", async () => {
+  test("needs no token and returns the owner's username and only the public fields", async () => {
     const res = await t.request("GET", `/api/v1/brain/${hash}`);
 
     expect(res.status).toBe(200);
     expect(res.body.username).toBe("ada");
     expect(res.body.content).toHaveLength(1);
 
-    // The public response is an unprojected `select()`: every column, including
-    // the owner's userId, the extracted text and the 1536-dim embedding.
+    // Exact key list: a new column cannot become public without changing this.
     const row = res.body.content[0];
     expect(Object.keys(row).sort()).toEqual([
-      "createdAt",
       "embedUrl",
-      "embedding",
-      "extractedText",
       "favicon",
       "id",
       "link",
@@ -75,19 +71,14 @@ describe("GET /api/v1/brain/:shareLink", () => {
       "ogSiteName",
       "ogTitle",
       "processingStatus",
-      "searchVector",
       "summary",
       "tags",
       "title",
       "type",
-      "updatedAt",
-      "userId",
     ]);
     expect(row.title).toBe("Shared card");
-    expect(row.userId).toBe(ada.userId);
-    expect(row.extractedText).toBe("full text");
-    expect(row.embedding).toHaveLength(1536);
-    expect(row.searchVector).toBe("'card':2A 'share':1A");
+    expect(res.text).not.toContain(ada.userId);
+    expect(res.text).not.toContain("full text");
   });
 
   test("an unknown hash is a 404", async () => {

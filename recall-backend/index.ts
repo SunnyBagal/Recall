@@ -303,8 +303,26 @@ export function createApp(deps: AppDeps) {
       return res.status(404).json({ message: "User not found" });
     }
 
+    // Explicit allowlist: this route needs no login, so a new column stays
+    // private until someone adds it here. Exactly what the share page renders
+    // (recall-frontend/src/pages/shared.tsx); never userId, extractedText,
+    // embedding or searchVector.
     const content = await db
-      .select()
+      .select({
+        id: contents.id,
+        title: contents.title,
+        link: contents.link,
+        type: contents.type,
+        tags: contents.tags,
+        ogTitle: contents.ogTitle,
+        ogDescription: contents.ogDescription,
+        ogImage: contents.ogImage,
+        ogSiteName: contents.ogSiteName,
+        favicon: contents.favicon,
+        embedUrl: contents.embedUrl,
+        summary: contents.summary,
+        processingStatus: contents.processingStatus,
+      })
       .from(contents)
       .where(eq(contents.userId, link.userId))
       .orderBy(contents.createdAt);

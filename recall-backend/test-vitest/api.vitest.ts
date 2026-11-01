@@ -303,7 +303,7 @@ describe("/api/v1/brain", () => {
     expect((await request(app).get("/api/v1/brain/nothing-here")).status).toBe(404);
   });
 
-  it("KNOWN BUG: the public share view leaks userId, extractedText and raw embeddings", async () => {
+  it("regression: the public share view never returns userId, extractedText or embeddings", async () => {
     const a = await newUser();
     await t.db.insert(contents).values({
       userId: a.id,
@@ -317,9 +317,13 @@ describe("/api/v1/brain", () => {
 
     expect(res.status).toBe(200);
     expect(res.body.username).toBe(a.name);
-    expect(res.body.content[0].userId).toBe(a.id);
-    expect(res.body.content[0].extractedText).toBe("private page text");
-    expect(res.body.content[0].embedding).toHaveLength(1536);
+    expect(res.body.content).toHaveLength(1);
+    for (const field of ["userId", "extractedText", "embedding", "searchVector", "updatedAt", "createdAt"]) {
+      expect(res.body.content[0]).not.toHaveProperty(field);
+    }
+    // Checked on the raw bytes too, so a differently named field cannot carry them.
+    expect(res.text).not.toContain(a.id);
+    expect(res.text).not.toContain("private page text");
   });
 });
 
