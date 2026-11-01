@@ -1,0 +1,21 @@
+{
+  "rows": 100,
+  "done": 100,
+  "with_embedding": 100,
+  "without_tags": 0,
+  "without_summary": 0,
+  "median_summary_chars": 422,
+  "seconds": 17.9,
+  "workerConcurrency": 12,
+  "uncachedCallsThisRun": {
+    "summaryCalls": 100,
+    "summaryInputTokens": 60215,
+    "summaryOutputTokens": 10950,
+    "embeddingCalls": 100,
+    "embeddingTokens": 39459
+  },
+  "failedJobs": 0,
+  "failures": [],
+  "cachedSummaries": 100,
+  "cachedEmbeddings": 100
+}
