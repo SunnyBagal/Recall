@@ -92,7 +92,7 @@ describe("processContent", () => {
     expect(after.updatedAt.getTime()).not.toBe(row.updatedAt.getTime());
   });
 
-  test("when no embedding comes back the row is still marked done, without one", async () => {
+  test("when no embedding comes back the job rejects and the row is failed, keeping its summary", async () => {
     const row = await insertContent({
       link: "https://dbweekly.example/posts/another-long-article-slug",
       type: "article",
@@ -102,12 +102,12 @@ describe("processContent", () => {
     });
     const { deps, summarizer } = fakeDeps(null);
 
-    await processContent(job(row.id), deps);
+    await expect(processContent(job(row.id), deps)).rejects.toThrow("Embedding failed");
 
     // row.title wins over ogTitle for the summarizer's title argument
     expect(summarizer.calls[0]!.title).toBe("My own title");
     const after = await reload(row.id);
-    expect(after.processingStatus).toBe("done");
+    expect(after.processingStatus).toBe("failed");
     expect(after.summary).toBe("Indexes trade write cost for read speed.");
     expect(after.embedding).toBeNull();
   });

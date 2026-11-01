@@ -84,11 +84,14 @@ export async function processContent(job: ContentJob, deps: WorkerDeps) {
   }
 
   
-  const aiResult = await generateSummaryAndTags(
-    fullText,
-    content.title ?? content.ogTitle,
-    content.type
-  );
+  // A retry after a failed embedding already has its summary; don't pay for it twice.
+  const aiResult = content.summary
+    ? { summary: content.summary, tags: content.tags ?? [] }
+    : await generateSummaryAndTags(
+        fullText,
+        content.title ?? content.ogTitle,
+        content.type
+      );
 
   
   
@@ -102,21 +105,39 @@ export async function processContent(job: ContentJob, deps: WorkerDeps) {
 
   const embedding = await generateEmbedding(embeddingInput);
 
-  
+  // No vector means this row is invisible to the vector arm of search, so it
+  // must not look finished. Keep the work done so far, mark it failed, and throw
+  // so BullMQ retries; a later attempt that succeeds sets it to done. If every
+  // attempt fails it stays failed, and scripts/backfill-embeddings.ts can
+  // recover it.
+  if (!embedding) {
+    await db
+      .update(contents)
+      .set({
+        extractedText: text,
+        summary: aiResult.summary,
+        tags: aiResult.tags,
+        processingStatus: "failed",
+        updatedAt: new Date(),
+      })
+      .where(eq(contents.id, contentId));
+    throw new Error(`Embedding failed for content ${contentId}`);
+  }
+
   await db
     .update(contents)
     .set({
       extractedText: text,
       summary: aiResult.summary,
       tags: aiResult.tags,
-      ...(embedding && { embedding }),
+      embedding,
       processingStatus: "done",
       updatedAt: new Date(),
     })
     .where(eq(contents.id, contentId));
 
   console.log(
-    `[Worker] ✓ Content ${contentId} processed — summary: ${aiResult.summary.slice(0, 60)}... tags: [${aiResult.tags.join(", ")}] embedding: ${embedding ? "yes" : "skipped"}`
+    `[Worker] ✓ Content ${contentId} processed — summary: ${aiResult.summary.slice(0, 60)}... tags: [${aiResult.tags.join(", ")}] embedding: yes`
   );
 }
 

@@ -109,16 +109,35 @@ describe("processContent (embedding and summarizer mocked)", () => {
     expect(d.generateSummaryAndTags).not.toHaveBeenCalled();
   });
 
-  it("KNOWN BUG: a failed embedding still ends 'done', with no embedding and no retry", async () => {
+  it("regression: a failed embedding marks the row failed and rejects, so BullMQ retries", async () => {
     const row = await insert({ title: "No vector", extractedText: TEXT });
     const d = deps();
     d.generateEmbedding.mockResolvedValueOnce(null);
 
-    await expect(processContent(job(row.id), d.all)).resolves.toBeUndefined();
+    await expect(processContent(job(row.id), d.all)).rejects.toThrow("Embedding failed");
 
     const after = await reload(row.id);
-    expect(after.processingStatus).toBe("done");
+    expect(after.processingStatus).toBe("failed");
     expect(after.embedding).toBeNull();
+    expect(after.summary).toBe("Short summary.");
+  });
+
+  it("a failed row recovers on retry, without paying for the summary twice", async () => {
+    const row = await insert({ title: "Recovers", extractedText: TEXT });
+    const d = deps();
+    d.generateEmbedding.mockResolvedValueOnce(null);
+
+    await expect(processContent(job(row.id, 0), d.all)).rejects.toThrow();
+    await processContent(job(row.id, 1), d.all);
+
+    expect(d.generateSummaryAndTags).toHaveBeenCalledTimes(1);
+    expect(d.generateEmbedding).toHaveBeenCalledTimes(2);
+    expect(await reload(row.id)).toMatchObject({
+      processingStatus: "done",
+      summary: "Short summary.",
+      tags: ["science"],
+      embedding: oneHot(3),
+    });
   });
 
   it("an embedding that throws rejects the job so BullMQ can retry, leaving 'processing'", async () => {
