@@ -96,10 +96,13 @@ describe("POST /api/v1/signup", () => {
     expect(res.status).toBe(400);
   });
 
-  it("KNOWN BUG: a duplicate email is a 500, the handler's 409 branch is unreachable", async () => {
+  it("409 on a duplicate email", async () => {
     const body = { username: "dup", email: "dup@example.org", password: "p" };
     expect((await request(app).post("/api/v1/signup").send(body)).status).toBe(201);
-    expect((await request(app).post("/api/v1/signup").send(body)).status).toBe(500);
+
+    const res = await request(app).post("/api/v1/signup").send(body);
+    expect(res.status).toBe(409);
+    expect(res.body).toEqual({ message: "Email already taken" });
   });
 });
 
@@ -132,9 +135,14 @@ describe("POST /api/v1/signin", () => {
     expect(res.status).toBe(401);
   });
 
-  it("KNOWN BUG: an unknown user is 403 but a wrong password is 401, which reveals who exists", async () => {
-    const res = await request(app).post("/api/v1/signin").send({ username: "ghost", password: "x" });
-    expect(res.status).toBe(403);
+  it("an unknown user and a wrong password get the same 401, so the response does not reveal who exists", async () => {
+    const unknown = await request(app).post("/api/v1/signin").send({ username: "ghost", password: "x" });
+    const wrong = await request(app)
+      .post("/api/v1/signin")
+      .send({ username: creds.username, password: "wrong" });
+
+    expect(unknown.status).toBe(401);
+    expect(unknown.body).toEqual(wrong.body);
   });
 
   it("KNOWN BUG: a missing password on an existing user is a 500, not a 400", async () => {

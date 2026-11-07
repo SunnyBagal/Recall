@@ -69,8 +69,10 @@ export function createApp(deps: AppDeps) {
         userId: user.id,      
       });
     } catch (err: any) {
-      if (err.code === "23505") {
-        return res.status(409).json({ message: "Email or username already taken" });
+      // Drizzle wraps driver errors in DrizzleQueryError, so the Postgres error
+      // code is on err.cause. 23505 = unique_violation; only email is unique.
+      if ((err?.cause?.code ?? err?.code) === "23505") {
+        return res.status(409).json({ message: "Email already taken" });
       }
       console.error(err);
       res.status(500).json({ message: "Internal server error" });
@@ -95,9 +97,11 @@ export function createApp(deps: AppDeps) {
         .where(or(...conditions))
         .limit(1);
 
+      // Same status and message as a wrong password, so the response does not
+      // reveal which accounts exist.
       if (!user) {
-        return res.status(403).json({
-          message: "Incorrect Credentials!",
+        return res.status(401).json({
+          message: "Invalid credentials",
         });
       }
 

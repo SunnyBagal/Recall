@@ -40,16 +40,15 @@ describe("POST /api/v1/signup", () => {
     expect(res.body).toEqual({ message: "Username, email and password are required" });
   });
 
-  test("a duplicate email returns 500, not the 409 the handler intends", async () => {
-    // The handler checks err.code === "23505", but drizzle wraps driver errors
-    // in DrizzleQueryError (the code is on err.cause), so the 409 branch is
-    // never reached.
+  test("a duplicate email returns 409", async () => {
+    // drizzle wraps driver errors in DrizzleQueryError, so the handler reads the
+    // unique_violation code (23505) from err.cause.
     const res = await t.request("POST", "/api/v1/signup", {
       body: { username: "ada-again", email: "ada@example.com", password: "hunter2hunter2" },
     });
 
-    expect(res.status).toBe(500);
-    expect(res.body).toEqual({ message: "Internal server error" });
+    expect(res.status).toBe(409);
+    expect(res.body).toEqual({ message: "Email already taken" });
   });
 
   test("a duplicate username is accepted (only email is unique)", async () => {
@@ -98,12 +97,12 @@ describe("POST /api/v1/signin", () => {
     expect(res.body).toEqual({ message: "Email or username required" });
   });
 
-  test("an unknown user is 403 and a wrong password is 401, with different messages", async () => {
+  test("an unknown user and a wrong password both get the same 401", async () => {
     const unknown = await t.request("POST", "/api/v1/signin", {
       body: { username: "nobody", password: "correct horse" },
     });
-    expect(unknown.status).toBe(403);
-    expect(unknown.body).toEqual({ message: "Incorrect Credentials!" });
+    expect(unknown.status).toBe(401);
+    expect(unknown.body).toEqual({ message: "Invalid credentials" });
 
     const wrong = await t.request("POST", "/api/v1/signin", {
       body: { username: "grace", password: "wrong" },
