@@ -93,9 +93,9 @@ User types "that video about caching"
        │
        ├──▶ pgvector cosine similarity search (semantic)
        │
-       ├──▶ PostgreSQL ILIKE search (keyword fallback)
+       ├──▶ PostgreSQL full-text search (tsvector + GIN, keyword)
        │
-       └──▶ Reciprocal Rank Fusion (merge + deduplicate)
+       └──▶ Weighted Reciprocal Rank Fusion (merge + deduplicate)
               │
               ▼
         Ranked results as rich cards

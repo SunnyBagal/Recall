@@ -328,8 +328,8 @@ export function createApp(deps: AppDeps) {
       const userId = req.userId!;
 
       // Embed the query live (OpenAI) for the end-to-end path, then run the
-      // shared hybrid retrieval (pgvector + ILIKE + RRF). The exact same
-      // hybridSearch() is what the benchmark's retrieval-only mode calls.
+      // shared hybrid retrieval (pgvector + Postgres FTS + weighted RRF). The
+      // exact same hybridSearch() is what the eval harness (eval/run.ts) calls.
       const queryEmbedding = await generateEmbedding(query);
       const merged = await hybridSearch(db, userId, query, queryEmbedding);
 

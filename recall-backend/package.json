@@ -1,5 +1,5 @@
 {
-  "name": "brainly",
+  "name": "recall-backend",
   "module": "index.ts",
   "type": "module",
   "private": true,
@@ -28,7 +28,6 @@
     "@types/cors": "^2.8.19",
     "@types/express": "^5.0.6",
     "@types/jsonwebtoken": "^9.0.10",
-    "@types/mongoose": "^5.11.97",
     "argon2": "^0.44.0",
     "bullmq": "^5.77.6",
     "cors": "^2.8.6",

@@ -4,7 +4,7 @@ import { performance } from "node:perf_hooks";
 import type { Db } from "../config/db";
 import { contents, users } from "../db/schema";
 
-// Optional per-arm timing sink for benchmarking. When a caller passes one,
+// Optional per-arm timing sink for the eval harness (eval/run.ts). When a caller passes one,
 // hybridSearch() fills in the wall time of each phase. Production callers pass
 // nothing, and every measurement is guarded by `if (timings)` so the normal
 // code path is completely unchanged.
@@ -218,16 +218,17 @@ export async function nearestContents(
 /**
  * Hybrid search: pgvector cosine similarity (dense) + Postgres full-text
  * search over the generated search_vector column (lexical), fused with
- * Reciprocal Rank Fusion (k=60) in application code.
+ * weighted Reciprocal Rank Fusion in application code (RRF_K, VECTOR_WEIGHT
+ * and FTS_WEIGHT above).
  *
  * This is the SINGLE source of truth for the retrieval path — the /search
- * route handler and the benchmark both call this exact function so the bench
- * measures the real code, not a fork.
+ * route handler and the eval harness (eval/run.ts) both call this exact
+ * function, so the eval measures the real code, not a fork.
  *
  * `queryEmbedding` is passed in (not computed here) so callers control where
  * the embedding comes from: the route embeds live via OpenAI per request; the
- * benchmark's retrieval-only mode passes a precomputed embedding to isolate DB
- * + fusion latency from the external embedding call.
+ * eval passes a precomputed embedding to isolate DB + fusion latency from the
+ * external embedding call.
  */
 export async function hybridSearch(
   db: Db,
