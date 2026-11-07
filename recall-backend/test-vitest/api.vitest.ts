@@ -96,10 +96,13 @@ describe("POST /api/v1/signup", () => {
     expect(res.status).toBe(400);
   });
 
-  it("KNOWN BUG: a duplicate email is a 500, the handler's 409 branch is unreachable", async () => {
+  it("409 on a duplicate email", async () => {
     const body = { username: "dup", email: "dup@example.org", password: "p" };
     expect((await request(app).post("/api/v1/signup").send(body)).status).toBe(201);
-    expect((await request(app).post("/api/v1/signup").send(body)).status).toBe(500);
+
+    const res = await request(app).post("/api/v1/signup").send(body);
+    expect(res.status).toBe(409);
+    expect(res.body).toEqual({ message: "Email already taken" });
   });
 });
 
@@ -110,36 +113,63 @@ describe("POST /api/v1/signin", () => {
     await request(app).post("/api/v1/signup").send(creds);
   });
 
-  it.each([
-    ["username", { username: creds.username, password: creds.password }],
-    ["email", { email: creds.email, password: creds.password }],
-  ])("returns a verifiable token when signing in by %s", async (_how, body) => {
-    const res = await request(app).post("/api/v1/signin").send(body);
+  it("returns a verifiable token when signing in by email", async () => {
+    const res = await request(app)
+      .post("/api/v1/signin")
+      .send({ email: creds.email, password: creds.password });
 
     expect(res.status).toBe(200);
     expect(jwt.verify(res.body.token, SECRET)).toHaveProperty("userId");
   });
 
-  it("400 without a username or email", async () => {
-    const res = await request(app).post("/api/v1/signin").send({ password: "x" });
+  it.each([
+    ["a username and no email", { username: creds.username, password: creds.password }],
+    ["no email", { password: "x" }],
+    ["no password", { email: creds.email }],
+    ["no body", undefined],
+  ])("400 with %s", async (_case, body) => {
+    const res = await request(app).post("/api/v1/signin").send(body);
     expect(res.status).toBe(400);
+    expect(res.body).toEqual({ message: "Email and password are required" });
+  });
+
+  it("two users with the same username each sign in with their own email", async () => {
+    const twins = [
+      { username: "twin", email: "twin-a@example.org", password: "password-a" },
+      { username: "twin", email: "twin-b@example.org", password: "password-b" },
+    ];
+    for (const twin of twins) {
+      expect((await request(app).post("/api/v1/signup").send(twin)).status).toBe(201);
+    }
+
+    for (const { email, password } of twins) {
+      const res = await request(app).post("/api/v1/signin").send({ email, password });
+      expect(res.status).toBe(200);
+
+      const [row] = await t.db.select().from(users).where(eq(users.email, email));
+      expect(jwt.verify(res.body.token, SECRET)).toHaveProperty("userId", row!.id);
+    }
   });
 
   it("401 on a wrong password", async () => {
     const res = await request(app)
       .post("/api/v1/signin")
-      .send({ username: creds.username, password: "wrong" });
+      .send({ email: creds.email, password: "wrong" });
     expect(res.status).toBe(401);
   });
 
-  it("KNOWN BUG: an unknown user is 403 but a wrong password is 401, which reveals who exists", async () => {
-    const res = await request(app).post("/api/v1/signin").send({ username: "ghost", password: "x" });
-    expect(res.status).toBe(403);
-  });
+  it("an unknown email and a wrong password get the same 401 and message, so the response does not reveal who exists", async () => {
+    const unknown = await request(app)
+      .post("/api/v1/signin")
+      .send({ email: "ghost@example.org", password: "x" });
+    const wrong = await request(app)
+      .post("/api/v1/signin")
+      .send({ email: creds.email, password: "wrong" });
 
-  it("KNOWN BUG: a missing password on an existing user is a 500, not a 400", async () => {
-    const res = await request(app).post("/api/v1/signin").send({ username: creds.username });
-    expect(res.status).toBe(500);
+    expect(unknown.status).toBe(401);
+    expect(wrong.status).toBe(401);
+    expect(unknown.body).toEqual({ message: "Invalid credentials" });
+    expect(unknown.body).toEqual(wrong.body);
   });
 });
 

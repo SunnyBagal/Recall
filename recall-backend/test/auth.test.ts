@@ -40,16 +40,15 @@ describe("POST /api/v1/signup", () => {
     expect(res.body).toEqual({ message: "Username, email and password are required" });
   });
 
-  test("a duplicate email returns 500, not the 409 the handler intends", async () => {
-    // The handler checks err.code === "23505", but drizzle wraps driver errors
-    // in DrizzleQueryError (the code is on err.cause), so the 409 branch is
-    // never reached.
+  test("a duplicate email returns 409", async () => {
+    // drizzle wraps driver errors in DrizzleQueryError, so the handler reads the
+    // unique_violation code (23505) from err.cause.
     const res = await t.request("POST", "/api/v1/signup", {
       body: { username: "ada-again", email: "ada@example.com", password: "hunter2hunter2" },
     });
 
-    expect(res.status).toBe(500);
-    expect(res.body).toEqual({ message: "Internal server error" });
+    expect(res.status).toBe(409);
+    expect(res.body).toEqual({ message: "Email already taken" });
   });
 
   test("a duplicate username is accepted (only email is unique)", async () => {
@@ -68,9 +67,9 @@ describe("POST /api/v1/signin", () => {
     });
   });
 
-  test("signs in by username and returns a 24h token carrying the userId", async () => {
+  test("signs in by email and returns a 24h token carrying the userId", async () => {
     const res = await t.request("POST", "/api/v1/signin", {
-      body: { username: "grace", password: "correct horse" },
+      body: { email: "grace@example.com", password: "correct horse" },
     });
 
     expect(res.status).toBe(200);
@@ -82,40 +81,52 @@ describe("POST /api/v1/signin", () => {
     expect(payload.exp! - payload.iat!).toBe(24 * 60 * 60);
   });
 
-  test("signs in by email", async () => {
+  test("a username with no email is a 400", async () => {
     const res = await t.request("POST", "/api/v1/signin", {
-      body: { email: "grace@example.com", password: "correct horse" },
+      body: { username: "grace", password: "correct horse" },
     });
-
-    expect(res.status).toBe(200);
-    expect(typeof res.body.token).toBe("string");
-  });
-
-  test("requires an email or a username", async () => {
-    const res = await t.request("POST", "/api/v1/signin", { body: { password: "correct horse" } });
 
     expect(res.status).toBe(400);
-    expect(res.body).toEqual({ message: "Email or username required" });
+    expect(res.body).toEqual({ message: "Email and password are required" });
   });
 
-  test("an unknown user is 403 and a wrong password is 401, with different messages", async () => {
+  test("a missing password is a 400", async () => {
+    const res = await t.request("POST", "/api/v1/signin", { body: { email: "grace@example.com" } });
+
+    expect(res.status).toBe(400);
+    expect(res.body).toEqual({ message: "Email and password are required" });
+  });
+
+  test("two users with the same username each sign in with their own email", async () => {
+    const twins = [
+      { username: "twin", email: "twin-a@example.com", password: "password-a" },
+      { username: "twin", email: "twin-b@example.com", password: "password-b" },
+    ];
+    for (const twin of twins) {
+      expect((await t.request("POST", "/api/v1/signup", { body: twin })).status).toBe(201);
+    }
+
+    for (const { email, password } of twins) {
+      const res = await t.request("POST", "/api/v1/signin", { body: { email, password } });
+      expect(res.status).toBe(200);
+
+      const [row] = await t.db.select().from(users).where(eq(users.email, email));
+      const payload = jwt.verify(res.body.token, process.env.JWT_SECRET!) as jwt.JwtPayload;
+      expect(payload.userId).toBe(row!.id);
+    }
+  });
+
+  test("an unknown email and a wrong password both get the same 401", async () => {
     const unknown = await t.request("POST", "/api/v1/signin", {
-      body: { username: "nobody", password: "correct horse" },
+      body: { email: "nobody@example.com", password: "correct horse" },
     });
-    expect(unknown.status).toBe(403);
-    expect(unknown.body).toEqual({ message: "Incorrect Credentials!" });
+    expect(unknown.status).toBe(401);
+    expect(unknown.body).toEqual({ message: "Invalid credentials" });
 
     const wrong = await t.request("POST", "/api/v1/signin", {
-      body: { username: "grace", password: "wrong" },
+      body: { email: "grace@example.com", password: "wrong" },
     });
     expect(wrong.status).toBe(401);
     expect(wrong.body).toEqual({ message: "Invalid credentials" });
-  });
-
-  test("a missing password for an existing user is a 500", async () => {
-    const res = await t.request("POST", "/api/v1/signin", { body: { username: "grace" } });
-
-    expect(res.status).toBe(500);
-    expect(res.body).toEqual({ message: "Internal server error" });
   });
 });
