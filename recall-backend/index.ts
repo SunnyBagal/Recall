@@ -3,7 +3,7 @@ import jwt from "jsonwebtoken";
 import argon2 from "argon2";
 import cors from "cors";
 import { nanoid } from "nanoid";
-import { eq, or, and, desc } from "drizzle-orm";
+import { eq, and, desc } from "drizzle-orm";
 import { authMiddleware } from "./middleware/middleware";
 import { hybridSearch, nearestContents } from "./services/searchService";
 
@@ -18,6 +18,18 @@ import type { AnthropicClient } from "./services/aiProcessor";
 import Anthropic from "@anthropic-ai/sdk";
 
 const JWT_SECRET = process.env.JWT_SECRET!;
+
+// Signup hashes with these, and sign-in's dummy hash must use the same ones.
+const ARGON2_OPTIONS = {
+  type: argon2.argon2id,
+  memoryCost: 19456,
+  timeCost: 2,
+  parallelism: 1,
+} as const;
+
+// Sign-in verifies against this when no user has the email, so an unknown email
+// costs the same argon2 work as a wrong password. Hashed once, at startup.
+const dummyPasswordHash = argon2.hash("recall-signin-dummy-password", ARGON2_OPTIONS);
 
 export interface AppDeps {
   db: Db;
@@ -50,12 +62,7 @@ export function createApp(deps: AppDeps) {
         });
       }
 
-      const hashedPassword = await argon2.hash(password, {
-        type: argon2.argon2id,
-        memoryCost: 19456,
-        timeCost: 2,
-        parallelism: 1,
-      });
+      const hashedPassword = await argon2.hash(password, ARGON2_OPTIONS);
 
     
       const [user] = await db.insert(users).values({
@@ -81,25 +88,23 @@ export function createApp(deps: AppDeps) {
 
   app.post("/api/v1/signin", async (req, res) => {
     try {
-      const { username, email, password } = req.body ?? {};
-    
-      const conditions = [];
-      if (username) conditions.push(eq(users.username, username));
-      if (email) conditions.push(eq(users.email, email));
+      // Email only: it is the one unique column, so it names exactly one account.
+      const { email, password } = req.body ?? {};
 
-      if (conditions.length === 0) {
-        return res.status(400).json({ message: "Email or username required" });
+      if (typeof email !== "string" || !email || typeof password !== "string" || !password) {
+        return res.status(400).json({ message: "Email and password are required" });
       }
 
       const [user] = await db
         .select()
         .from(users)
-        .where(or(...conditions))
+        .where(eq(users.email, email))
         .limit(1);
 
-      // Same status and message as a wrong password, so the response does not
-      // reveal which accounts exist.
+      // Same argon2 work, status and message as a wrong password, so neither the
+      // response nor its timing reveals which accounts exist.
       if (!user) {
+        await argon2.verify(await dummyPasswordHash, password);
         return res.status(401).json({
           message: "Invalid credentials",
         });
