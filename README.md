@@ -8,6 +8,26 @@ Paste a link. Get a card. Ask AI about it later.
 
 ---
 
+## Measured, not claimed
+
+Search quality and speed are measured with a retrieval eval on the public [BEIR SciFact](https://github.com/beir-cellar/beir) dataset. Every number below comes from a script in `recall-backend/eval/` that you can rerun. Full tables and method are in [`recall-backend/eval/RESULTS.md`](recall-backend/eval/RESULTS.md).
+
+**Conditions:** 5,183 documents ingested through the real worker (Claude Haiku summaries, OpenAI embeddings), 300 labelled test queries, k = 10. Latency is warm p50 over 300 queries × 3 passes, database and fusion time only, measured locally on an Apple M1 Pro with Postgres 17.10 and pgvector 0.8.2.
+
+| What | Result |
+|---|---|
+| Vector search quality | nDCG@10 **0.7201**, Recall@10 **0.8549** |
+| Hybrid (vector + full-text, weighted RRF) | nDCG@10 **0.7192**, a statistical tie with vector only (95% interval of the difference: −0.0070 to +0.0050) |
+| Full-text search fix | Queries returning nothing: **285 → 2** of 300. FTS nDCG@10: **0.0420 → 0.4583** |
+| Multi-tenant recall fix | A user owning 68 of 5,183 rows used to get **14.18%** of their true top 10; now **100.00%** |
+| Routing by user size | 68-row user: **11.33 → 1.58 ms**. User owning the whole table: HNSW **2.74 ms** vs seq scan **41.57 ms** |
+| Ingestion at scale | **5,183 / 5,183** documents processed, **0** failed jobs, about **$6.00** in API calls (calculated from token counts) |
+| Tests | **219** passing: 100 `bun test` + 119 Vitest/Supertest, including real Postgres + pgvector and real BullMQ on Redis |
+
+Hybrid doesn't beat vector-only on SciFact. Its queries are natural-language claims, which favour embeddings. Full-text search is kept for exact names and keywords, and so search still returns results when the embedding call fails.
+
+---
+
 ## What it does
 
 You save a URL. Recall figures out the rest.
@@ -29,10 +49,12 @@ Behind the scenes, every saved link goes through an async processing pipeline: t
 | Frontend | React 19, TypeScript, Vite, Tailwind CSS v4 |
 | State | Zustand (UI state), TanStack Query (server state) |
 | Backend | Express 5, TypeScript, Bun runtime |
-| Database | PostgreSQL + Drizzle ORM + pgvector |
+| Database | PostgreSQL + Drizzle ORM + pgvector 0.8+ (HNSW with iterative scan), tsvector + GIN full-text |
 | Queue | BullMQ + Redis |
-| AI | Claude API (summarization, chat), OpenAI (embeddings) |
+| AI | Claude Haiku 4.5 (summaries, tags), Claude Sonnet 4.6 (chat), OpenAI `text-embedding-3-small` (1536-dim embeddings) |
 | Auth | Argon2id + JWT |
+| Testing | `bun test`, Vitest + Supertest, real Postgres/pgvector and BullMQ integration tests |
+| Eval | BEIR SciFact harness: nDCG@10, Recall@10, MRR@10, p50/p95 latency |
 | Deployment | Vercel (frontend), Railway (API, worker, PostgreSQL, Redis) |
 
 ---
@@ -49,7 +71,8 @@ User pastes URL
 │  + Zustand       │     └─────────┬─────────┘
 └──────────────────┘               │
                                    │  1. detectLinkType()   — regex, instant
-                                   │  2. fetchMetadata()    — OG tags, 1-3s
+                                   │  2. fetchMetadata()    — OG tags + article
+                                   │     text (Readability), SSRF-guarded, 1-3s
                                    │  3. INSERT → PostgreSQL
                                    │  4. Queue job → BullMQ
                                    │  5. Return response → card appears
@@ -65,7 +88,7 @@ User pastes URL
                               │  1. Extract text              │
                               │     YouTube → transcript      │
                               │     GitHub  → README          │
-                              │     Article → Readability     │
+                              │     Others  → text from step 2│
                               │                               │
                               │  2. Claude API                │
                               │     → 2-3 sentence summary    │
@@ -76,6 +99,8 @@ User pastes URL
                               │                               │
                               │  4. UPDATE PostgreSQL         │
                               │     status → "done"           │
+                              │     (embedding failed →       │
+                              │      "failed" + job retries)  │
                               └───────────────────────────────┘
                                    │
                                    │  TanStack Query polls every 5s
@@ -91,21 +116,27 @@ User types "that video about caching"
        ▼
   Generate query embedding (OpenAI)
        │
-       ├──▶ pgvector cosine similarity search (semantic)
+       ├──▶ Vector arm (pgvector cosine similarity, semantic)
+       │      user owns ≤ 450 rows → exact scan via user_id btree
+       │      user owns  > 450 rows → HNSW + iterative scan
+       │                              (exact fallback if < 10 rows come back)
        │
-       ├──▶ PostgreSQL full-text search (tsvector + GIN, keyword)
+       ├──▶ Full-text arm (weighted tsvector + GIN, terms ORed)
        │
-       └──▶ Weighted Reciprocal Rank Fusion (merge + deduplicate)
-              │
+       └──▶ Weighted Reciprocal Rank Fusion (k = 3, FTS weight 0.3,
+              │                          tuned on the SciFact train split)
               ▼
         Ranked results as rich cards
 ```
+
+The 450-row threshold is the measured crossover. Below it, an exact scan is faster than walking an HNSW graph full of other users' rows. A bounded `count(*) … limit 451` on the btree picks the route in under 0.15 ms.
 
 **RAG chat flow:**
 ```
 User asks "summarize everything about system design"
        │
-       ├──▶ Retrieve top 5 relevant saved links (vector search)
+       ├──▶ Retrieve top 5 saved links above 0.25 similarity
+       │    (same vector search as /search; falls back to recent items)
        │
        ├──▶ Build numbered context: [1] "Title" ... [2] "Title" ...
        │
@@ -121,7 +152,7 @@ User asks "summarize everything about system design"
 ### Prerequisites
 
 - [Bun](https://bun.sh) (runtime for both frontend and backend)
-- PostgreSQL 15+ with [pgvector](https://github.com/pgvector/pgvector) extension
+- PostgreSQL 15+ with [pgvector](https://github.com/pgvector/pgvector) **0.8 or newer** (search uses `hnsw.iterative_scan`)
 - Redis (for BullMQ job queue)
 - [Anthropic API key](https://console.anthropic.com) (for Claude — summarization + chat)
 - [OpenAI API key](https://platform.openai.com/api-keys) (for text-embedding-3-small)
@@ -130,8 +161,8 @@ User asks "summarize everything about system design"
 
 ```bash
 # Clone the repo
-git clone https://github.com/SunnyBagal/recall.git
-cd recall
+git clone https://github.com/SunnyBagal/Recall.git
+cd Recall
 
 # Backend
 cd recall-backend
@@ -178,6 +209,33 @@ psql recall_dev -c "CREATE EXTENSION IF NOT EXISTS vector;"
 cd recall-backend && bunx drizzle-kit push
 ```
 
+`drizzle-kit push` is for a fresh local database. On a live database, apply the standalone SQL files in `recall-backend/drizzle/` with `psql "$DATABASE_URL" -f <file>`. They build indexes `CONCURRENTLY`, so writes aren't blocked.
+
+### Tests
+
+The tests use their own local Postgres and Redis on non-default ports. They refuse any database that isn't on loopback, and block outbound network calls unless a test stubs them.
+
+```bash
+cd recall-backend
+eval/local-services.sh start   # Postgres + pgvector on 127.0.0.1:54329, Redis on 127.0.0.1:63799
+bun run test                   # bun test, then Vitest
+eval/local-services.sh stop
+```
+
+### Retrieval eval
+
+```bash
+cd recall-backend
+eval/local-services.sh start
+bun --no-env-file run eval/download.ts   # BEIR SciFact
+bun run eval/ingest.ts --limit=100       # dry run: real token counts for 100 docs
+bun run eval/ingest.ts                   # full ingest (paid API calls, cached to eval/cache/)
+bun --no-env-file run eval/run.ts --label=mine
+bun --no-env-file run eval/report.ts     # regenerates eval/RESULTS.md
+```
+
+Only `ingest.ts` and `embed-train.ts` call paid APIs. Everything else reruns for free. The full command list is in [`eval/RESULTS.md`](recall-backend/eval/RESULTS.md#reproduce).
+
 ---
 
 ## Features
@@ -188,13 +246,13 @@ cd recall-backend && bunx drizzle-kit push
 
 **Async AI pipeline** — When you save a link, the card appears instantly. A BullMQ worker running in a separate process extracts the page text, generates a Claude summary, auto-tags by category, and creates a vector embedding. The frontend polls only while cards are processing and stops when everything's done.
 
-**Semantic search** — Type natural language queries. "That video about caching" finds content titled "Redis Performance Tips" because the vector embeddings capture meaning, not just keywords. Combined with keyword fallback via reciprocal rank fusion.
+**Semantic search** — Type natural language queries. "That video about caching" finds content titled "Redis Performance Tips" because the vector embeddings capture meaning, not just keywords. It's combined with weighted full-text search through reciprocal rank fusion. Each user only ever searches their own links: small accounts get an exact scan, large ones get HNSW with pgvector's iterative scan. Without that, a user's own results could be hidden behind other users' rows.
 
 **RAG chat** — Ask questions across all your saved content. "Summarize everything about system design" or "Compare those two React articles." Claude streams answers with numbered citations that link back to the original cards.
 
 **Dynamic sidebar** — Type filters and tag filters are generated dynamically from your actual content. Save 3 YouTube videos and 2 articles? The sidebar shows "YouTube (3)" and "Articles (2)." Tags like "tech," "career," "system-design" appear as the worker processes your links.
 
-**Share brain** — Generate a public link to share your entire collection. Anyone with the link can browse your saved content in a read-only view.
+**Share brain** — Generate a public link to share your entire collection. Anyone with the link can browse your saved content in a read-only view. The public endpoint returns a fixed allowlist of card fields: never user IDs, extracted page text or embeddings.
 
 ---
 
@@ -297,15 +355,23 @@ recall/
 │   │   ├── db.ts                   # Drizzle connection
 │   │   └── queue.ts                # BullMQ + Redis setup
 │   ├── db/
-│   │   └── schema.ts               # PostgreSQL tables (Drizzle)
+│   │   ├── schema.ts               # PostgreSQL tables + indexes (Drizzle)
+│   │   └── sharedContent.ts        # Public share-link field allowlist
+│   ├── drizzle/                    # Standalone SQL: HNSW, FTS, user_id btree
 │   ├── middleware/
 │   │   └── middleware.ts            # JWT auth
-│   └── services/
-│       ├── linkDetector.ts          # URL → content type (regex)
-│       ├── metadataFetcher.ts       # URL → OG tags + article text
-│       ├── textExtractor.ts         # YouTube transcripts, GitHub READMEs
-│       ├── aiProcessor.ts           # Claude summarization + tagging
-│       └── embeddings.ts            # OpenAI vector embeddings
+│   ├── services/
+│   │   ├── linkDetector.ts          # URL → content type (regex)
+│   │   ├── metadataFetcher.ts       # URL → OG tags + article text
+│   │   ├── urlGuard.ts              # SSRF guard for outbound fetches
+│   │   ├── textExtractor.ts         # YouTube transcripts, GitHub READMEs
+│   │   ├── aiProcessor.ts           # Claude summarization + tagging
+│   │   ├── embeddings.ts            # OpenAI vector embeddings
+│   │   └── searchService.ts         # Vector/FTS arms, routing, weighted RRF
+│   ├── scripts/                     # Backfill and repair jobs
+│   ├── test/                        # bun test suite
+│   ├── test-vitest/                 # Vitest + Supertest, real Postgres + BullMQ
+│   └── eval/                        # SciFact harness + RESULTS.md
 │
 ├── recall-frontend/
 │   ├── src/
